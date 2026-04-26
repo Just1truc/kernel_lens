@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kernel-lens"
+version = "1.0.0"
+description = "A production-grade, multi-backend compiler for Triton kernels (ONNX & TensorRT)"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [
+    { name = "Compiler Engineer" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Core dependencies required just to trace and build the C++ logic
+dependencies = [
+    "torch>=2.1.0",
+    "triton>=2.1.0",
+    "onnx>=1.15.0",
+]
+
+# Optional bracket dependencies for the inference engines
+[project.optional-dependencies]
+ort = ["onnxruntime-gpu>=1.17.0"]
+trt = ["tensorrt>=8.6.0"]
+all = ["onnxruntime-gpu>=1.17.0", "tensorrt>=8.6.0"]
+
+[project.urls]
+"Source Code" = "https://github.com/yourusername/kernel-lens"
+"Bug Tracker" = "https://github.com/yourusername/kernel-lens/issues"
+
+[tool.setuptools.packages.find]
+include = ["kernel_lens*"]
