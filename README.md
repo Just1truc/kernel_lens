@@ -1,13 +1,7 @@
 # Kernel Lens
 
-<style>
-.logo{
-    border-radius: 50%;
-}
-</style>
-
 <div align="center">
-  <img src="logo.png" class="logo" alt="KL Logo"  width="250"/>
+  <img src="https://raw.githubusercontent.com/Just1truc/kernel_lens/main/logo.png" style="border-radius: 50%;" alt="KL Logo"  width="250"/>
 </div>
 
 -------------------
