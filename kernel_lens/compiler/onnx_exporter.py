@@ -71,6 +71,25 @@ class TritonGlobalONNXExporter:
                             out_count = max(1, len([a for a in manifest.arguments if a.kind == 'output']))
                             return g.op(f"triton_custom::{kernel_name}", *inputs, outputs=out_count)
 
+                    dynamic_anchor = None
+                    for a in final_args:
+                        if isinstance(a, torch.Tensor) and not isinstance(a, torch.nn.Parameter):
+                            dynamic_anchor = a
+                            break
+                            
+                    # 2. Defeat TensorRT's static weight folding
+                    if dynamic_anchor is not None:
+                        # Create a computationally free scalar 0.0 with a rigid DAG dependency
+                        zero_scalar = dynamic_anchor.reshape(-1)[0] * 0.0
+                        secured_args = []
+                        for a in final_args:
+                            if isinstance(a, torch.nn.Parameter):
+                                # Force TRT to treat the parameter as a dynamic execution buffer
+                                secured_args.append(a + zero_scalar.to(a.dtype))
+                            else:
+                                secured_args.append(a)
+                        final_args = secured_args
+
                     res = TritonONNXNode.apply(*final_args)
                     
                     # 4. WIRE THE GRAPH TOGETHER

@@ -1,5 +1,6 @@
 import os
 import torch
+import triton
 from torch.fx.experimental.proxy_tensor import make_fx
 from typing import Optional
 import warnings
@@ -12,12 +13,28 @@ from .onnx_exporter import TritonGlobalONNXExporter
 # Backend Generators
 from ..backends.ort_gen import generate_ort_bindings
 from ..backends.trt_gen import generate_trt_bindings
+from ..utils.env_check import check_environment
 
 # Builders
 from ..backends.builder import build_ort_plugin, build_trt_plugin
 
 # Runtime
 from ..runtime.engine import CompiledModel
+
+_orig_next_power_of_2 = triton.next_power_of_2
+
+def _dynamic_next_power_of_2(n):
+    # Check if we are dealing with a PyTorch Symbolic Variable during a trace
+    if "SymInt" in str(type(n)) or isinstance(n, torch.Tensor):
+        # 2 ^ ceil(log2(n)) -> This creates dynamic nodes in the ONNX graph!
+        n_tensor = torch.as_tensor(n, dtype=torch.float32)
+        power = torch.ceil(torch.log2(n_tensor))
+        return torch.pow(2, power).to(torch.int64)
+    
+    # Normal execution fallback
+    return _orig_next_power_of_2(n)
+
+triton.next_power_of_2 = _dynamic_next_power_of_2
 
 def _get_cache_dir(model_name: str, inputs: tuple) -> str:
     home_dir = os.path.expanduser("~")

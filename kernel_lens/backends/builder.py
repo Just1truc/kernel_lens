@@ -111,6 +111,7 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
             f"-I{cuda_inc}", "-Wno-deprecated-gpu-targets"
         ]
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # subprocess.run(cmd, check=True)
         
     so_path = os.path.join(trt_plugins_dir, "libtriton_trt_plugins.so")
     

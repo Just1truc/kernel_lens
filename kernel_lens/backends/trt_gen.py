@@ -214,6 +214,40 @@ REGISTER_TENSORRT_PLUGIN({plugin_name}Creator);
             arg_setup_lines.append(f"{c_type} implicit_pad_{slot_idx} = 0;")
             arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&implicit_pad_{slot_idx};")
 
+        # --- KERNEL PARAMS PACKING (TRITON DCE AVOIDANCE) ---
+        # --- KERNEL PARAMS PACKING (TRITON DCE AVOIDANCE) ---
+        args_packing = []
+        in_idx = 0
+        out_idx = 0
+        
+        # --- KERNEL PARAMS PACKING (TRITON DCE AVOIDANCE) ---
+        args_packing = []
+        # On crée une vraie variable en mémoire contenant un pointeur nul
+        args_packing.append("void* dummy_ptr = nullptr;")
+        in_idx = 0
+        out_idx = 0
+        
+        for arg in manifest.arguments:
+            if arg.kind == 'input':
+                args_packing.append(f"kernelParams_vec.push_back((void*)&inputs[{in_idx}]);")
+                in_idx += 1
+            elif arg.kind == 'output':
+                args_packing.append(f"kernelParams_vec.push_back((void*)&outputs[{out_idx}]);")
+                out_idx += 1
+            elif arg.kind == 'scalar':
+                val = arg.value
+                # L'heuristique Triton equal_to_1 supprime l'argument du PTX
+                if val == 1:
+                    args_packing.append(f"// Triton equal_to_1 DCE: Skipped {arg.name}")
+                else:
+                    args_packing.append(f"kernelParams_vec.push_back((void*)&m_{arg.name});")
+                    
+        # On remplit la fin de la signature avec l'ADRESSE de notre pointeur nul
+        pad_str = f"while(kernelParams_vec.size() < {len(manifest.arguments)}) kernelParams_vec.push_back((void*)&dummy_ptr);"
+        args_packing.append(pad_str)
+        
+        kernel_params_cpp = "\n    ".join(args_packing)
+
         # --- DYNAMIC OUTPUT DATATYPES ---
         output_type_lines = []
         out_args = [a for a in manifest.arguments if a.kind == 'output']
@@ -299,11 +333,19 @@ int {plugin_name}::enqueue(const nvinfer1::PluginTensorDesc* inputDesc, const nv
     {dynamic_args_cpp}
     
     std::vector<void*> kernelParams_vec;
-    for(int i = 0; i < {num_ptx_slots}; i++) {{
+    /*for(int i = 0; i < {num_ptx_slots}; i++) {{
         kernelParams_vec.push_back(kernelParams[i]);
-    }}
+    }}*/
+    {kernel_params_cpp}
     
     CUresult launch_status = cuLaunchKernel(mKernel, grid_x, grid_y, grid_z, block_x, 1, 1, {manifest.shared_memory_bytes}, stream, kernelParams_vec.data(), nullptr);
+    /*printf("=======================================\\n");
+    printf("[TRT C++ DEBUG] Kernel Enqueue Fired!\\n");
+    for (size_t i = 0; i < kernelParams_vec.size(); i++) {{
+        void* actual_ptr = *(void**)kernelParams_vec[i]; 
+        printf("[TRT C++ DEBUG] Argument %zu VRAM Address: %p\\n", i, actual_ptr);
+    }}
+    printf("=======================================\\n");*/
     
     return 0;
 }}
