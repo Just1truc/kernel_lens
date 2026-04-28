@@ -31,6 +31,18 @@ class TritonSymIntTracingContext:
             clean_kwargs = {k: v for k, v in kwargs.items() if k not in triton_args}
             bound_args = sig.bind(*args, **clean_kwargs)
             bound_args.apply_defaults()
+
+            # print(f"\n[TRACER DEBUG] Launching Kernel: {jit_self.fn.__name__}")
+            # tensor_map = {}
+            # for name, value in bound_args.arguments.items():
+            #     if isinstance(value, torch.Tensor):
+            #         ptr = value.data_ptr()
+            #         print(f"  -> {name}: Ptr={ptr}, Shape={list(value.shape)}, Stride={list(value.stride())}")
+                    
+            #         # Check for Aliasing
+            #         if ptr in tensor_map:
+            #             print(f"  ⚠️ ALERT: '{name}' is ALIASING '{tensor_map[ptr]}' (Same DataPtr!)")
+            #         tensor_map[ptr] = name
             
             meta_kwargs = {name: value for name, value in bound_args.arguments.items()}
 
@@ -111,7 +123,7 @@ class TritonSymIntTracingContext:
                     continue
 
                 if isinstance(value, torch.Tensor):
-                    manifest_args.append(ArgumentDef(name, "unknown", tuple(value.shape), str(value.dtype)))
+                    manifest_args.append(ArgumentDef(name, "unknown", tuple(value.shape), strides=tuple(value.stride()), dtype=str(value.dtype)))
                 elif isinstance(value, (int, float, torch.SymInt, bool)):
                     concrete_val = value
                     if isinstance(value, torch.SymInt):
@@ -120,7 +132,7 @@ class TritonSymIntTracingContext:
                             concrete_val = value.node.shape_env.size_hint(value.node.expr)
                         concrete_val = concrete_val or 1
                     
-                    manifest_args.append(ArgumentDef(name, "scalar", (), str(type(concrete_val).__name__), concrete_val, _sym_ast=value))
+                    manifest_args.append(ArgumentDef(name, "scalar", (), (), str(type(concrete_val).__name__), concrete_val, _sym_ast=value))
             
             manifest = KernelManifest(
                 kernel_name=mangled_name,
@@ -146,37 +158,93 @@ class TritonSymIntTracingContext:
 
 
 def extract_manifests(module: torch.nn.Module, dummy_inputs: Tuple[Any, ...]) -> List[KernelManifest]:
-    """
-    Runs a module forward pass to capture Triton kernels, extract their PTX, 
-    and build a symbolic AST mapping of their inputs/outputs.
-    """
     global _CAPTURED_MANIFESTS
     
-    # PASS 1: Extract real native GPU payload (PTX byte arrays)
+    # PASS 1: Real Execution
     with TritonSymIntTracingContext():
         module(*dummy_inputs)
-        
     pass1_manifests = list(_CAPTURED_MANIFESTS)
     _CAPTURED_MANIFESTS.clear()
     
-    # PASS 2: Extract algebraic shape mapping via symbolic Make FX tracing
+    # PASS 2: Symbolic (Fake) Execution
     with TritonSymIntTracingContext():
         try:
             make_fx(module, tracing_mode="symbolic", _allow_non_fake_inputs=True)(*dummy_inputs)
         except Exception:
-            # make_fx tracing frequently orphans nodes dynamically, we expect it to crash occasionally
             pass
-            
     pass2_manifests = list(_CAPTURED_MANIFESTS)
     
-    # MERGE: Combine the hard PTX from Pass 1 with the SymInt ASTs from Pass 2
+    print(f"\n[MERGE DEBUG] Pass 1 Kernels: {len(pass1_manifests)} | Pass 2 Kernels: {len(pass2_manifests)}")
+    
     merged = []
-    for m1, m2 in zip(pass1_manifests, pass2_manifests):
+    for i, (m1, m2) in enumerate(zip(pass1_manifests, pass2_manifests)):
+        print(f"  -> Kernel {i} [{m1.kernel_name}]:")
         m1._sym_grid_asts = m2._sym_grid_asts
+        
         for a1, a2 in zip(m1.arguments, m2.arguments):
-            a1.shape = a2.shape
+            # LOG THE CONFLICT
+            if a1.shape != a2.shape:
+                print(f"     ⚠️ SHAPE MISMATCH for '{a1.name}':")
+                print(f"        Pass 1 (Real): {a1.shape}")
+                print(f"        Pass 2 (Fake): {a2.shape} <--- THIS IS THE CULPRIT")
+            
+            # THE FIX: We keep Pass 1's shape but take Pass 2's AST logic
             a1._sym_ast = a2._sym_ast
+            # a1.shape remains what it was in Pass 1
+            
         merged.append(m1)
         
     _CAPTURED_MANIFESTS.clear()
     return merged
+
+# def extract_manifests(module: torch.nn.Module, dummy_inputs: Tuple[Any, ...]) -> List[KernelManifest]:
+#     """
+#     Runs a module forward pass to capture Triton kernels, extract their PTX, 
+#     and build a symbolic AST mapping of their inputs/outputs.
+#     """
+#     global _CAPTURED_MANIFESTS
+    
+#     # PASS 1: Extract real native GPU payload (PTX byte arrays)
+#     with TritonSymIntTracingContext():
+#         module(*dummy_inputs)
+        
+#     pass1_manifests = list(_CAPTURED_MANIFESTS)
+#     _CAPTURED_MANIFESTS.clear()
+    
+#     # PASS 2: Extract algebraic shape mapping via symbolic Make FX tracing
+#     with TritonSymIntTracingContext():
+#         try:
+#             make_fx(module, tracing_mode="symbolic", _allow_non_fake_inputs=True)(*dummy_inputs)
+#         except Exception:
+#             # make_fx tracing frequently orphans nodes dynamically, we expect it to crash occasionally
+#             pass
+            
+#     pass2_manifests = list(_CAPTURED_MANIFESTS)
+    
+#     # MERGE: Combine the hard PTX from Pass 1 with the SymInt ASTs from Pass 2
+#     # merged = []
+#     # for m1, m2 in zip(pass1_manifests, pass2_manifests):
+#     #     m1._sym_grid_asts = m2._sym_grid_asts
+#     #     for a1, a2 in zip(m1.arguments, m2.arguments):
+#     #         a1.shape = a2.shape
+#     #         a1._sym_ast = a2._sym_ast
+#     #     merged.append(m1)
+#     # MERGE: Combine the hard PTX from Pass 1 with the SymInt ASTs from Pass 2
+#     merged = []
+#     for m1, m2 in zip(pass1_manifests, pass2_manifests):
+#         m1._sym_grid_asts = m2._sym_grid_asts
+        
+#         # We MUST prioritize the shapes from Pass 1 (The REAL run)
+#         # Pass 2 (make_fx) often guesses wrong shapes for custom ops
+#         for a1, a2 in zip(m1.arguments, m2.arguments):
+#             # a1 has the shape from the REAL GPU tensors [1, 512, 64, 64]
+#             # a2 has the shape from the Fake FX tensors [1, 128, 64, 64]
+            
+#             # FORCE the real shape into the manifest
+#             a1._sym_ast = a2._sym_ast 
+#             # We keep a1.shape as it was captured in Pass 1!
+            
+#         merged.append(m1)
+        
+#     _CAPTURED_MANIFESTS.clear()
+#     return merged

@@ -8,6 +8,7 @@ class ArgumentDef:
     name: str
     kind: str  # Starts as "unknown" for tensors, "scalar" for primitives
     shape: tuple = ()
+    strides: tuple = ()
     dtype: str = ""
     value: Any = None
     _sym_ast: Any = None

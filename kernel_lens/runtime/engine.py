@@ -32,6 +32,95 @@ class CompiledModel:
         else:
             raise NotImplementedError(f"Execution for backend '{backend}' is not implemented yet.")
 
+    # def _run_ort(self, inputs: tuple):
+    #     import onnxruntime as ort
+    #     import torch
+    #     import numpy as np
+
+    #     if self._ort_session is None:
+    #         so_path = os.path.join(self.cache_dir, "ort_plugins", "libtriton_ort_plugins.so")
+    #         onnx_path = os.path.join(self.cache_dir, f"{self.model_name}.onnx")
+
+    #         if not os.path.exists(so_path):
+    #             raise FileNotFoundError(f"ORT Plugin missing at: {so_path}")
+            
+    #         session_options = ort.SessionOptions()
+    #         session_options.register_custom_ops_library(so_path)
+            
+    #         # On force CUDA
+    #         providers = ['CUDAExecutionProvider']
+    #         self._ort_session = ort.InferenceSession(onnx_path, sess_options=session_options, providers=providers)
+    #         # Cache pour l'IO Binding
+    #         self._ort_io_binding = self._ort_session.io_binding()
+
+    #     # 1. Préparation des tenseurs (contigus et sur GPU)
+    #     trt_inputs = []
+    #     session_inputs = self._ort_session.get_inputs()
+        
+    #     for i, sess_in in enumerate(session_inputs):
+    #         inp = inputs[i]
+    #         # On regarde ce que le graphe ONNX attend pour cet index
+    #         expected_type = sess_in.type # ex: 'tensor(float)' ou 'tensor(double)'
+            
+    #         if isinstance(inp, torch.Tensor):
+    #             t = inp if inp.is_cuda else inp.cuda()
+    #             trt_inputs.append(t.contiguous())
+    #         elif isinstance(inp, (float, int)):
+    #             # ADAPTATION DYNAMIQUE AU TYPE DU GRAPHE
+    #             dtype = torch.float32
+    #             if "double" in expected_type: dtype = torch.float64
+    #             if "int64" in expected_type:  dtype = torch.int64
+    #             if "int32" in expected_type:  dtype = torch.int32
+                
+    #             trt_inputs.append(torch.tensor(inp, device='cuda', dtype=dtype))
+    #         else:
+    #             trt_inputs.append(torch.as_tensor(inp, device='cuda'))
+
+    #     # 2. Binding des Entrées (Utilise le type exact du tenseur préparé)
+    #     for i, sess_in in enumerate(session_inputs):
+    #         t = trt_inputs[i]
+    #         # Mapping numpy/onnx type
+    #         onnx_type = np.float32
+    #         if t.dtype == torch.float64: onnx_type = np.float64
+    #         if t.dtype == torch.int64:   onnx_type = np.int64
+            
+    #         self._ort_io_binding.bind_input(
+    #             name=sess_in.name,
+    #             device_type='cuda',
+    #             device_id=0,
+    #             element_type=onnx_type,
+    #             shape=tuple(t.shape),
+    #             buffer_ptr=t.data_ptr()
+    #         )
+
+    #     # 3. Binding des Sorties (On pré-alloue dans PyTorch pour garder la main sur la VRAM)
+    #     session_outputs = self._ort_session.get_outputs()
+    #     torch_outputs = []
+    #     for sess_out in session_outputs:
+    #         # Note: Si shapes dynamiques complexes, il faut parfois appeler 
+    #         # self._ort_io_binding.bind_output(name=sess_out.name, device_type='cuda')
+    #         # Mais ici on alloue proprement :
+    #         shape = [dim if isinstance(dim, int) and dim > 0 else 1 for dim in sess_out.shape]
+    #         # Pour RoPE/Attention, on force les shapes connues du premier input si ORT renvoie None
+    #         if any(isinstance(d, str) or d is None for d in sess_out.shape):
+    #              shape = trt_inputs[0].shape # Heuristique simple
+                 
+    #         out_tensor = torch.empty(tuple(shape), device='cuda', dtype=torch.float32)
+    #         torch_outputs.append(out_tensor)
+            
+    #         self._ort_io_binding.bind_output(
+    #             name=sess_out.name,
+    #             device_type='cuda',
+    #             device_id=0,
+    #             element_type=np.float32,
+    #             shape=tuple(shape),
+    #             buffer_ptr=out_tensor.data_ptr()
+    #         )
+
+    #     # 4. Exécution
+    #     self._ort_session.run_with_iobinding(self._ort_io_binding)
+        
+    #     return torch_outputs
     def _run_ort(self, inputs: tuple):
         import onnxruntime as ort
         import torch
@@ -40,85 +129,72 @@ class CompiledModel:
         if self._ort_session is None:
             so_path = os.path.join(self.cache_dir, "ort_plugins", "libtriton_ort_plugins.so")
             onnx_path = os.path.join(self.cache_dir, f"{self.model_name}.onnx")
-
-            if not os.path.exists(so_path):
-                raise FileNotFoundError(f"ORT Plugin missing at: {so_path}")
             
             session_options = ort.SessionOptions()
             session_options.register_custom_ops_library(so_path)
-            
-            # On force CUDA
-            providers = ['CUDAExecutionProvider']
-            self._ort_session = ort.InferenceSession(onnx_path, sess_options=session_options, providers=providers)
-            # Cache pour l'IO Binding
+            self._ort_session = ort.InferenceSession(onnx_path, sess_options=session_options, providers=['CUDAExecutionProvider'])
             self._ort_io_binding = self._ort_session.io_binding()
 
-        # 1. Préparation des tenseurs (contigus et sur GPU)
         trt_inputs = []
         session_inputs = self._ort_session.get_inputs()
         
         for i, sess_in in enumerate(session_inputs):
             inp = inputs[i]
-            # On regarde ce que le graphe ONNX attend pour cet index
-            expected_type = sess_in.type # ex: 'tensor(float)' ou 'tensor(double)'
+            expected_type = sess_in.type 
             
             if isinstance(inp, torch.Tensor):
-                t = inp if inp.is_cuda else inp.cuda()
-                trt_inputs.append(t.contiguous())
+                # FIX: If it's not contiguous (transposed), we CLONE. 
+                # This ensures the physical memory layout matches the logical shape.
+                if not inp.is_contiguous() or (inp.data_ptr() % 16 != 0):
+                    # t = inp.contiguous().clone()
+                    t = torch.zeros(inp.shape, device='cuda', dtype=inp.dtype)
+                    t.copy_(inp)
+                else:
+                    t = inp if inp.is_cuda else inp.cuda()
+                trt_inputs.append(t)
             elif isinstance(inp, (float, int)):
-                # ADAPTATION DYNAMIQUE AU TYPE DU GRAPHE
+                # PRECISION FIX: Match the scale factor to the graph's expected precision
                 dtype = torch.float32
                 if "double" in expected_type: dtype = torch.float64
-                if "int64" in expected_type:  dtype = torch.int64
-                if "int32" in expected_type:  dtype = torch.int32
+                elif "int64" in expected_type: dtype = torch.int64
                 
                 trt_inputs.append(torch.tensor(inp, device='cuda', dtype=dtype))
             else:
-                trt_inputs.append(torch.as_tensor(inp, device='cuda'))
+                trt_inputs.append(torch.as_tensor(inp, device='cuda').contiguous())
 
-        # 2. Binding des Entrées (Utilise le type exact du tenseur préparé)
+        # 2. BIND INPUTS
+        # print(f"\nDEBUG: ORT Binding for {self.model_name}")
         for i, sess_in in enumerate(session_inputs):
             t = trt_inputs[i]
-            # Mapping numpy/onnx type
-            onnx_type = np.float32
-            if t.dtype == torch.float64: onnx_type = np.float64
-            if t.dtype == torch.int64:   onnx_type = np.int64
-            
+            # print(f"  -> Input[{i}] '{sess_in.name}': shape={tuple(t.shape)}, dtype={t.dtype}, ptr={hex(t.data_ptr())}")
+            # if t.numel() <= 1: # Print the actual value for scalars
+            #     print(f"     VALUE: {t.item()}")
+            onnx_type = np.float64 if t.dtype == torch.float64 else (np.int64 if t.dtype == torch.int64 else np.float32)
             self._ort_io_binding.bind_input(
-                name=sess_in.name,
-                device_type='cuda',
-                device_id=0,
-                element_type=onnx_type,
-                shape=tuple(t.shape),
-                buffer_ptr=t.data_ptr()
+                name=sess_in.name, device_type='cuda', device_id=0,
+                element_type=onnx_type, shape=tuple(t.shape), buffer_ptr=t.data_ptr()
             )
 
-        # 3. Binding des Sorties (On pré-alloue dans PyTorch pour garder la main sur la VRAM)
-        session_outputs = self._ort_session.get_outputs()
+        # 3. OUTPUT ALLOCATION
         torch_outputs = []
-        for sess_out in session_outputs:
-            # Note: Si shapes dynamiques complexes, il faut parfois appeler 
-            # self._ort_io_binding.bind_output(name=sess_out.name, device_type='cuda')
-            # Mais ici on alloue proprement :
-            shape = [dim if isinstance(dim, int) and dim > 0 else 1 for dim in sess_out.shape]
-            # Pour RoPE/Attention, on force les shapes connues du premier input si ORT renvoie None
-            if any(isinstance(d, str) or d is None for d in sess_out.shape):
-                 shape = trt_inputs[0].shape # Heuristique simple
-                 
-            out_tensor = torch.empty(tuple(shape), device='cuda', dtype=torch.float32)
-            torch_outputs.append(out_tensor)
+        for sess_out in self._ort_session.get_outputs():
+            # Correctly infer shape for non-contiguous/transposed tensors
+            shape = [d if (isinstance(d, int) and d > 0) else trt_inputs[0].shape[i] 
+                     for i, d in enumerate(sess_out.shape)]
             
+            # zeros() prevents noise in Tiny Seq tests
+            out_tensor = torch.zeros(tuple(shape), device='cuda', dtype=torch.float32)
+            torch_outputs.append(out_tensor)
             self._ort_io_binding.bind_output(
-                name=sess_out.name,
-                device_type='cuda',
-                device_id=0,
-                element_type=np.float32,
-                shape=tuple(shape),
-                buffer_ptr=out_tensor.data_ptr()
+                name=sess_out.name, device_type='cuda', device_id=0,
+                element_type=np.float32, shape=tuple(shape), buffer_ptr=out_tensor.data_ptr()
             )
 
-        # 4. Exécution
-        self._ort_session.run_with_iobinding(self._ort_io_binding)
+        try:
+            self._ort_session.run_with_iobinding(self._ort_io_binding)
+            torch.cuda.synchronize()
+        except Exception as e:
+            raise RuntimeError(f"ORT Execution failed: {e}")
         
         return torch_outputs
 

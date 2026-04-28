@@ -42,6 +42,77 @@ def _get_cache_dir(model_name: str, inputs: tuple) -> str:
     os.makedirs(cache_path, exist_ok=True)
     return cache_path
 
+def is_nhwc(tensor_shape, tensor_strides):
+    # For a 4D tensor (N, C, H, W)
+    # NHWC strides should be: (C*H*W, 1, W*C, C)
+    N, C, H, W = tensor_shape
+    expected_nhwc = (C*H*W, 1, W*C, C)
+    # Allow for some padding/alignment variations if necessary
+    return tensor_strides[1] == 1
+
+def validate_manifests(manifests):
+    print("DEBUG: Validating manifests...")
+    for m in manifests:
+        for arg in m.arguments:
+            if hasattr(arg, 'strides') and arg.strides and len(arg.shape) == 4:
+                # 1. THE STRIDE CHECK (Now with Layout Intelligence)
+                N, C, H, W = [int(d) for d in arg.shape]
+                actual_strides = tuple(arg.strides)
+                
+                # Standard NCHW (Contiguous)
+                # Strides: (C*H*W, H*W, W, 1)
+                expected_nchw = (C*H*W, H*W, W, 1)
+                
+                # Channels Last NHWC (Contiguous)
+                # Strides: (H*W*C, 1, W*C, C)
+                expected_nhwc = (H*W*C, 1, W*C, C)
+                
+                is_standard = actual_strides == expected_nchw
+                is_channels_last = actual_strides == expected_nhwc
+                
+                if not (is_standard or is_channels_last):
+                    raise ValueError(
+                        f"❌ [Layout Error] Tensor '{arg.name}' has non-contiguous strides {actual_strides}. "
+                        f"Expected NCHW {expected_nchw} or NHWC {expected_nhwc}.\n"
+                        f"Action: If you are using custom views, call .contiguous() or .to(memory_format=torch.channels_last)."
+                    )
+            
+            elif hasattr(arg, 'strides') and arg.strides:
+                # Fallback for non-4D tensors (1D, 2D, 3D, 5D)
+                expected_strides = []
+                current_stride = 1
+                for d in reversed(arg.shape):
+                    expected_strides.insert(0, current_stride)
+                    try:
+                        current_stride *= int(d)
+                    except: break
+                
+                if expected_strides and tuple(arg.strides) != tuple(expected_strides):
+                    # We still allow the 1-element scalar case which can have weird strides
+                    if len(arg.shape) > 0 and any(d > 1 for d in arg.shape):
+                        raise ValueError(f"❌ [Layout Error] Tensor '{arg.name}' has invalid strides {arg.strides}.")
+
+            if hasattr(arg, 'strides') and arg.strides and hasattr(arg, 'shape'):
+                # Find which dimension has stride 1 (the contiguous inner-most dim)
+                try:
+                    # Get the index of the dimension that is physically contiguous
+                    inner_dim_idx = arg.strides.index(1)
+                    inner_dim_size = int(arg.shape[inner_dim_idx])
+                    
+                    # 2. PERFORM ALIGNMENT CHECK ON THE PHYSICAL INNER DIM
+                    if inner_dim_size % 8 != 0:
+                        layout_type = "NHWC" if inner_dim_idx == 1 else "Standard"
+                        raise ValueError(
+                            f"❌ [Alignment Error] Kernel '{m.kernel_name}' uses tensor '{arg.name}'\n"
+                            f"Physical inner dimension (index {inner_dim_idx}, size {inner_dim_size}) is not aligned.\n"
+                            f"Detected Layout: {layout_type}. Requires multiple of 8 for vectorization."
+                        )
+                except ValueError:
+                    # If no stride is 1, it's a non-contiguous mess we already caught
+                    pass
+                except Exception as e:
+                    print(f"Warning during validation: {e}")
+
 def compile(
     model: torch.nn.Module, 
     inputs: tuple, 
@@ -60,6 +131,8 @@ def compile(
         return CompiledModel(cache_dir, name, backends)
 
     manifests = analyze_grid_asts(manifests, handler=interaction_handler)
+
+    validate_manifests(manifests)
     
     # 1. Base ONNX Export (Needed by BOTH ORT and TRT)
     onnx_path = os.path.join(cache_dir, f"{name}.onnx")
