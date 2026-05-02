@@ -12,9 +12,9 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Kernel Lens bridges the gap between PyTorch research and high-performance C++ production. It automatically traces PyTorch modules, intercepts custom Triton kernels, generates optimized C++ bindings, and compiles them into native ONNX Runtime and TensorRT plugins—with zero C++ boilerplate required.
+Kernel Lens bridges the gap between PyTorch research and high-performance C++ production. It automatically traces PyTorch modules, intercepts custom Triton kernels, generates optimized C++ bindings, and compiles them into native ONNX Runtime and TensorRT plugins with zero C++ boilerplate required.
 
-## 📦 Installation
+## Installation
 
 Install the core compiler (PyTorch & ONNX graph tracing):
 ```bash
@@ -28,7 +28,7 @@ pip install kernel-lens[trt]   # For TensorRT support
 pip install kernel-lens[all]   # For everything
 ```
 
-## 🚀 Quickstart
+## Quickstart
 
 Take any standard PyTorch `nn.Module` containing a `@triton.jit` kernel, and compile it for production in one line:
 
@@ -57,7 +57,7 @@ ort_output = compiled_model.run((A, B), backend="onnx")
 ## ✨ Comprehensive Features
 
 ### 1. Zero C++ Boilerplate
-Kernel Lens entirely automates the generation of native C++ bindings. It reads your Triton kernel signatures and seamlessly generates robust `Ort::CustomOp` and `nvinfer1::IPluginV2` plugins. No bash scripts, no manual `nvcc` flags—just Python.
+Kernel Lens entirely automates the generation of native C++ bindings. It reads your Triton kernel signatures and seamlessly generates robust `Ort::CustomOp` and `nvinfer1::IPluginV2` plugins. No bash scripts, no manual `nvcc` flags, just Python.
 
 ### 2. Dynamic Grid AST Parsing
 Triton utilizes dynamic grid calculations (e.g., `triton.cdiv(M, BLOCK_SIZE)`). Kernel Lens intercepts PyTorch's symbolic tracing, sanitizes the AST (Abstract Syntax Tree), and dynamically translates it into raw, high-performance C++ integer math for the GPU block scheduler.
@@ -82,7 +82,7 @@ output = production_model.run((A, B), backend="tensorrt")
 ### 7. Fail-Fast Environment Diagnostics
 Kernel Lens respects your time. Before initiating complex graph tracing, the internal diagnostic tool verifies your system environment (`nvcc`, `g++`, TensorRT headers, ONNX Runtime execution providers). If a dependency is missing, it fails instantly with actionable installation advice.
 
-## 🛠️ Advanced Usage & Debugging
+## Advanced Usage & Debugging
 
 If you encounter silent failures or want to see exactly what C++ math is being generated and executed on the GPU, Kernel Lens includes an aggressive native C++ debugging suite. 
 
