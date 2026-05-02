@@ -54,7 +54,7 @@ trt_output = compiled_model.run((A, B), backend="tensorrt")
 ort_output = compiled_model.run((A, B), backend="onnx")
 ```
 
-## ✨ Comprehensive Features
+## Comprehensive Features
 
 ### 1. Zero C++ Boilerplate
 Kernel Lens entirely automates the generation of native C++ bindings. It reads your Triton kernel signatures and seamlessly generates robust `Ort::CustomOp` and `nvinfer1::IPluginV2` plugins. No bash scripts, no manual `nvcc` flags, just Python.
