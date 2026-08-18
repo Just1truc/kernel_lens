@@ -49,8 +49,15 @@ def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
         obj_path = os.path.join(ort_plugins_dir, cu_file.replace(".cu", ".o"))
         obj_files.append(obj_path)
         
+        try:
+            import torch
+            cap = torch.cuda.get_device_capability(0)
+            arch_flag = f"-gencode=arch=compute_{cap[0]}{cap[1]},code=sm_{cap[0]}{cap[1]}"
+        except Exception:
+            arch_flag = "-gencode=arch=compute_75,code=sm_75"
+
         cmd = [
-            "nvcc", "-c", cu_path, "-o", obj_path, "-O3", "-Xcompiler", "-fPIC",
+            "nvcc", "-c", cu_path, "-o", obj_path, "-O3", arch_flag, "-Xcompiler", "-fPIC",
             f"-I{ort_inc}", f"-I{cuda_inc}"
         ]
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -106,25 +113,40 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
         obj_path = os.path.join(trt_plugins_dir, cu_file.replace(".cu", ".o"))
         obj_files.append(obj_path)
         
+        user_trt_inc = os.path.expanduser("~/tensorrt_headers")
         cmd = [
             "nvcc", "-c", cu_path, "-o", obj_path, "-O3", "-Xcompiler", "-fPIC",
-            f"-I{cuda_inc}", "-Wno-deprecated-gpu-targets"
+            f"-I{cuda_inc}", "-I/usr/include", "-Wno-deprecated-gpu-targets"
         ]
+        if os.path.exists(user_trt_inc):
+            cmd.insert(-1, f"-I{user_trt_inc}")
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        # subprocess.run(cmd, check=True)
-        
     so_path = os.path.join(trt_plugins_dir, "libtriton_trt_plugins.so")
     
+    trt_lib_dirs = []
+    try:
+        import tensorrt
+        trt_dir = os.path.dirname(tensorrt.__file__)
+        for candidate in [trt_dir, os.path.join(os.path.dirname(trt_dir), "tensorrt_libs"), os.path.join(os.path.dirname(trt_dir), "tensorrt_cu13_libs")]:
+            if os.path.exists(candidate):
+                trt_lib_dirs.append(candidate)
+    except Exception:
+        pass
+
+    extra_link_args = []
+    for d in trt_lib_dirs:
+        extra_link_args.extend([f"-L{d}", f"-Wl,-rpath,{d}"])
+
     cmd = [
         "g++", "-shared", "-o", so_path
     ] + obj_files + [
-        f"-L{cuda_lib}", "-lcuda", "-lcudart", "-lnvinfer"
-    ]
+        f"-L{cuda_lib}", "-lcuda", "-lcudart"
+    ] + extra_link_args + ["-lnvinfer"]
     
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError as e:
-        print("\n[ERROR] TensorRT compilation failed. Ensure TensorRT is installed and in your LD_LIBRARY_PATH.")
+        print("\n[ERROR] TensorRT compilation failed. Link command:", " ".join(cmd))
         raise e
         
     # print(f"     [Builder] TRT Compilation successful! Plugin saved to {so_path}")

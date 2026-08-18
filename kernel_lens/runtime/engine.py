@@ -4,18 +4,17 @@ import numpy as np
 import torch
 
 class CompiledModel:
-    def __init__(self, cache_dir: str, model_name: str, backends: list[str]):
+    def __init__(self, cache_dir: str, model_name: str, backends: list[str], output_shapes: list = None, output_strides: list = None, output_dtypes: list = None, saved_args: list = None):
         """
         Represents a compiled PyTorch model ready for deployment.
-        
-        Args:
-            cache_dir: The hidden directory where artifacts are stored (e.g., ~/.kernel_lens_cache/model_hash)
-            model_name: The base name of the model (e.g., "my_model")
-            backends: List of successfully compiled backends (e.g., ["onnx", "tensorrt"])
         """
         self.cache_dir = cache_dir
         self.model_name = model_name
         self.backends = backends
+        self.output_shapes = output_shapes
+        self.output_strides = output_strides
+        self.output_dtypes = output_dtypes
+        self.saved_args = saved_args
         self._ort_session = None
 
     def run(self, inputs: tuple, backend: str = "onnx"):
@@ -133,70 +132,97 @@ class CompiledModel:
             session_options = ort.SessionOptions()
             session_options.register_custom_ops_library(so_path)
             self._ort_session = ort.InferenceSession(onnx_path, sess_options=session_options, providers=['CUDAExecutionProvider'])
-            self._ort_io_binding = self._ort_session.io_binding()
-
-        trt_inputs = []
-        session_inputs = self._ort_session.get_inputs()
-        
-        for i, sess_in in enumerate(session_inputs):
-            inp = inputs[i]
-            expected_type = sess_in.type 
             
+        io_binding = self._ort_session.io_binding()
+
+        session_inputs = self._ort_session.get_inputs()
+        from ..config import is_verbose
+        if is_verbose():
+            print(f"[ENGINE DEBUG] session_inputs count: {len(session_inputs)}")
+            for idx, s in enumerate(session_inputs):
+                print(f"  sess_in {idx}: name='{s.name}', type='{s.type}', shape={s.shape}")
+        
+        trt_inputs = []
+        for i, sess_in in enumerate(session_inputs):
+            if i < len(inputs):
+                inp = inputs[i]
+            elif self.saved_args and i < len(self.saved_args):
+                inp = self.saved_args[i]
+            else:
+                inp = inputs[-1]
+                
+            expected_type = sess_in.type 
+            is_scalar_input = (i >= len(inputs))
             if isinstance(inp, torch.Tensor):
-                # FIX: If it's not contiguous (transposed), we CLONE. 
-                # This ensures the physical memory layout matches the logical shape.
-                if not inp.is_contiguous() or (inp.data_ptr() % 16 != 0):
-                    # t = inp.contiguous().clone()
-                    t = torch.zeros(inp.shape, device='cuda', dtype=inp.dtype)
-                    t.copy_(inp)
-                else:
-                    t = inp if inp.is_cuda else inp.cuda()
+                t = inp.cpu() if is_scalar_input else (inp if inp.is_cuda else inp.cuda())
                 trt_inputs.append(t)
             elif isinstance(inp, (float, int)):
-                # PRECISION FIX: Match the scale factor to the graph's expected precision
                 dtype = torch.float32
                 if "double" in expected_type: dtype = torch.float64
                 elif "int64" in expected_type: dtype = torch.int64
-                
-                trt_inputs.append(torch.tensor(inp, device='cuda', dtype=dtype))
+                elif "int32" in expected_type: dtype = torch.int32
+                trt_inputs.append(torch.tensor([inp], device='cpu', dtype=dtype))
             else:
-                trt_inputs.append(torch.as_tensor(inp, device='cuda').contiguous())
+                t = torch.as_tensor(inp)
+                trt_inputs.append(t.cpu() if is_scalar_input else t.cuda())
 
         # 2. BIND INPUTS
-        # print(f"\nDEBUG: ORT Binding for {self.model_name}")
         for i, sess_in in enumerate(session_inputs):
             t = trt_inputs[i]
-            # print(f"  -> Input[{i}] '{sess_in.name}': shape={tuple(t.shape)}, dtype={t.dtype}, ptr={hex(t.data_ptr())}")
-            # if t.numel() <= 1: # Print the actual value for scalars
-            #     print(f"     VALUE: {t.item()}")
-            onnx_type = np.float64 if t.dtype == torch.float64 else (np.int64 if t.dtype == torch.int64 else np.float32)
-            self._ort_io_binding.bind_input(
-                name=sess_in.name, device_type='cuda', device_id=0,
+            torch_to_np_dtype = {
+                torch.float32: np.float32,
+                torch.float64: np.float64,
+                torch.float16: np.float16,
+                torch.int64: np.int64,
+                torch.int32: np.int32,
+                torch.int16: np.int16,
+                torch.int8: np.int8,
+                torch.uint8: np.uint8,
+            }
+            onnx_type = torch_to_np_dtype.get(t.dtype, np.float32)
+            dev_type = 'cpu' if (t.device.type == 'cpu' or i >= len(inputs)) else 'cuda'
+            io_binding.bind_input(
+                name=sess_in.name, device_type=dev_type, device_id=0,
                 element_type=onnx_type, shape=tuple(t.shape), buffer_ptr=t.data_ptr()
             )
 
         # 3. OUTPUT ALLOCATION
-        torch_outputs = []
-        for sess_out in self._ort_session.get_outputs():
-            # Correctly infer shape for non-contiguous/transposed tensors
-            shape = [d if (isinstance(d, int) and d > 0) else trt_inputs[0].shape[i] 
-                     for i, d in enumerate(sess_out.shape)]
-            
-            # zeros() prevents noise in Tiny Seq tests
-            out_tensor = torch.zeros(tuple(shape), device='cuda', dtype=torch.float32)
-            torch_outputs.append(out_tensor)
-            self._ort_io_binding.bind_output(
+        if not hasattr(self, '_ort_output_tensors') or self._ort_output_tensors is None:
+            self._ort_output_tensors = []
+            for i, sess_out in enumerate(self._ort_session.get_outputs()):
+                if self.output_shapes and i < len(self.output_shapes):
+                    out_shape = self.output_shapes[i]
+                else:
+                    out_shape = tuple([d if (isinstance(d, int) and d > 0) else trt_inputs[0].shape[j] for j, d in enumerate(sess_out.shape)])
+                out_stride = self.output_strides[i] if (self.output_strides and i < len(self.output_strides)) else None
+                out_dtype = self.output_dtypes[i] if (self.output_dtypes and i < len(self.output_dtypes)) else torch.float32
+                if out_stride and len(out_stride) == len(out_shape):
+                    t = torch.empty_strided(out_shape, out_stride, device='cuda', dtype=out_dtype)
+                else:
+                    t = torch.zeros(out_shape, device='cuda', dtype=out_dtype)
+                self._ort_output_tensors.append(t)
+
+        for sess_out, t in zip(self._ort_session.get_outputs(), self._ort_output_tensors):
+            np_dtype = np.float32
+            if t.dtype == torch.float64: np_dtype = np.float64
+            elif t.dtype == torch.float16: np_dtype = np.float16
+            elif t.dtype == torch.int64: np_dtype = np.int64
+            elif t.dtype == torch.int32: np_dtype = np.int32
+            elif t.dtype == torch.int8: np_dtype = np.int8
+
+            io_binding.bind_output(
                 name=sess_out.name, device_type='cuda', device_id=0,
-                element_type=np.float32, shape=tuple(shape), buffer_ptr=out_tensor.data_ptr()
+                element_type=np_dtype, shape=tuple(t.shape), buffer_ptr=t.data_ptr()
             )
 
         try:
-            self._ort_session.run_with_iobinding(self._ort_io_binding)
+            torch.cuda.synchronize()
+            self._ort_session.run_with_iobinding(io_binding)
             torch.cuda.synchronize()
         except Exception as e:
             raise RuntimeError(f"ORT Execution failed: {e}")
         
-        return torch_outputs
+        return self._ort_output_tensors[0] if len(self._ort_output_tensors) == 1 else tuple(self._ort_output_tensors)
 
     def _run_trt(self, inputs: tuple):
         import ctypes
@@ -212,7 +238,7 @@ class CompiledModel:
             onnx_path = os.path.join(self.cache_dir, f"{self.model_name}.onnx")
             engine_path = os.path.join(self.cache_dir, f"{self.model_name}.engine")
             
-            ctypes.CDLL(so_path)
+            ctypes.CDLL(so_path, mode=ctypes.RTLD_GLOBAL)
             TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
             trt.init_libnvinfer_plugins(TRT_LOGGER, "")
             
@@ -220,7 +246,10 @@ class CompiledModel:
             if not os.path.exists(engine_path):
                 print("     [Engine] Building TensorRT Engine... (This takes a moment)")
                 builder = trt.Builder(TRT_LOGGER)
-                network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
+                if hasattr(trt.NetworkDefinitionCreationFlag, "EXPLICIT_BATCH"):
+                    network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
+                else:
+                    network = builder.create_network()
                 parser = trt.OnnxParser(network, TRT_LOGGER)
                 
                 with open(onnx_path, 'rb') as model:
@@ -232,6 +261,16 @@ class CompiledModel:
                 config = builder.create_builder_config()
                 if hasattr(config, "set_memory_pool_limit"):
                     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30)
+                
+                # Set dynamic range for any INT8 tensors in the network
+                for i in range(network.num_inputs):
+                    t = network.get_input(i)
+                    if t.dtype == trt.DataType.INT8:
+                        t.set_dynamic_range(-128.0, 127.0)
+                for i in range(network.num_outputs):
+                    t = network.get_output(i)
+                    if t.dtype == trt.DataType.INT8:
+                        t.set_dynamic_range(-128.0, 127.0)
                 
                 serialized_engine = builder.build_serialized_network(network, config)
                 with open(engine_path, "wb") as f:
@@ -249,11 +288,16 @@ class CompiledModel:
 
 
         trt_inputs = []
-        for inp in inputs:
+        raw_inputs = list(inputs)
+        if self.saved_args and len(raw_inputs) < len(self.saved_args):
+            raw_inputs.extend(self.saved_args[len(raw_inputs):])
+
+        for inp in raw_inputs:
             if isinstance(inp, torch.Tensor):
-                trt_inputs.append(inp.cuda().contiguous() if not inp.is_cuda else inp.contiguous())
+                t = inp if inp.is_cuda else inp.cuda()
+                trt_inputs.append(t)
             elif isinstance(inp, (float, int)):
-                trt_inputs.append(torch.as_tensor(inp, device='cuda').contiguous())
+                trt_inputs.append(torch.as_tensor(inp, device='cuda'))
 
         current_input_ptrs = tuple(t.data_ptr() for t in trt_inputs)
 
@@ -286,30 +330,32 @@ class CompiledModel:
         
         # return torch_outputs
         # 2. Mise à jour des bindings (Seulement si nécessaire)
-        if current_input_ptrs != self._last_input_ptrs:
-            in_idx = 0
-            for i in range(self._trt_engine.num_io_tensors):
-                name = self._trt_engine.get_tensor_name(i)
-                if self._trt_engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
+        in_idx = 0
+        for i in range(self._trt_engine.num_io_tensors):
+            name = self._trt_engine.get_tensor_name(i)
+            if self._trt_engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
+                if in_idx < len(trt_inputs):
                     t = trt_inputs[in_idx]
                     self._trt_context.set_input_shape(name, t.shape)
                     self._trt_context.set_tensor_address(name, t.data_ptr())
                     in_idx += 1
-                else:
-                    # Réutilisation ou allocation des sorties
-                    shape = tuple(self._trt_context.get_tensor_shape(name))
-                    if name not in self._output_tensors or self._output_tensors[name].shape != shape:
-                        self._output_tensors[name] = torch.empty(shape, device='cuda', dtype=torch.float32)
-                    
-                    self._trt_context.set_tensor_address(name, self._output_tensors[name].data_ptr())
-            
-            self._last_input_ptrs = current_input_ptrs
 
-        # 3. Lancement 100% asynchrone
+        torch_outputs = []
+        out_idx = 0
+        for i in range(self._trt_engine.num_io_tensors):
+            name = self._trt_engine.get_tensor_name(i)
+            if self._trt_engine.get_tensor_mode(name) == trt.TensorIOMode.OUTPUT:
+                shape = tuple(self._trt_context.get_tensor_shape(name))
+                out_stride = self.output_strides[out_idx] if (self.output_strides and out_idx < len(self.output_strides)) else None
+                out_dtype = self.output_dtypes[out_idx] if (self.output_dtypes and out_idx < len(self.output_dtypes)) else torch.float32
+                if out_stride and len(out_stride) == len(shape):
+                    out_t = torch.empty_strided(shape, out_stride, device='cuda', dtype=out_dtype)
+                else:
+                    out_t = torch.empty(shape, device='cuda', dtype=out_dtype)
+                self._trt_context.set_tensor_address(name, out_t.data_ptr())
+                torch_outputs.append(out_t)
+                out_idx += 1
+
         self._trt_context.execute_async_v3(self._trt_stream.cuda_stream)
         torch.cuda.current_stream().wait_stream(self._trt_stream)
-        
-        # Retourne les tenseurs du cache
-        return [self._output_tensors[self._trt_engine.get_tensor_name(i)] 
-                for i in range(self._trt_engine.num_io_tensors) 
-                if self._trt_engine.get_tensor_mode(self._trt_engine.get_tensor_name(i)) == trt.TensorIOMode.OUTPUT]
+        return torch_outputs[0] if len(torch_outputs) == 1 else tuple(torch_outputs)

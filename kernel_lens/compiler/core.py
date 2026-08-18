@@ -118,9 +118,13 @@ def compile(
     inputs: tuple, 
     name: str = "custom_model", 
     backends: list[str] = ["onnx", "tensorrt"],
-    interaction_handler: Optional[InteractionHandler] = None
+    interaction_handler: Optional[InteractionHandler] = None,
+    verbose: bool = False
 ) -> CompiledModel:
-    
+    if verbose:
+        from ..config import set_verbose
+        set_verbose(True)
+        
     check_environment(backends)
     
     cache_dir = _get_cache_dir(name, inputs)
@@ -136,8 +140,7 @@ def compile(
     
     # 1. Base ONNX Export (Needed by BOTH ORT and TRT)
     onnx_path = os.path.join(cache_dir, f"{name}.onnx")
-    if not os.path.exists(onnx_path):
-        _export_to_onnx(model, inputs, onnx_path, manifests)
+    saved_args = _export_to_onnx(model, inputs, onnx_path, manifests)
     
     # 2. Compile ONNX Runtime Plugins
     if "onnx" in backends:
@@ -150,16 +153,32 @@ def compile(
         trt_plugins_dir = os.path.join(cache_dir, "trt_plugins")
         generate_trt_bindings(manifests, trt_plugins_dir)
         build_trt_plugin(trt_plugins_dir, cache_dir)
+        engine_file = os.path.join(cache_dir, f"{name}.engine")
+        if os.path.exists(engine_file):
+            try:
+                os.remove(engine_file)
+            except Exception:
+                pass
+    with torch.no_grad():
+        dummy_out = model(*inputs)
+    out_list = list(dummy_out) if isinstance(dummy_out, (tuple, list)) else [dummy_out]
+    output_shapes = [tuple(t.shape) for t in out_list if isinstance(t, torch.Tensor)]
+    output_strides = [tuple(t.stride()) for t in out_list if isinstance(t, torch.Tensor)]
+    output_dtypes = [t.dtype for t in out_list if isinstance(t, torch.Tensor)]
 
-    return CompiledModel(cache_dir, name, backends)
+    if saved_args:
+        try:
+            torch.save(saved_args, os.path.join(cache_dir, "saved_args.pt"))
+        except Exception:
+            pass
+
+    return CompiledModel(cache_dir, name, backends, output_shapes=output_shapes, output_strides=output_strides, output_dtypes=output_dtypes, saved_args=saved_args)
 
 def load(name: str) -> CompiledModel:
     """
     Loads a previously compiled model from the cache without recompiling.
     """
-    home_dir = os.path.expanduser("~")
-    cache_dir = os.path.join(home_dir, ".kernel_lens_cache", name)
-    
+    cache_dir = os.path.join(os.path.expanduser("~"), ".kernel_lens_cache", name)
     if not os.path.exists(cache_dir):
         raise FileNotFoundError(f"Model '{name}' not found in cache. Did you compile it?")
         
@@ -172,7 +191,15 @@ def load(name: str) -> CompiledModel:
     if not backends:
         raise RuntimeError(f"Cache for '{name}' exists, but no compiled backend plugins were found.")
         
-    return CompiledModel(cache_dir, name, backends)
+    saved_args = None
+    saved_args_path = os.path.join(cache_dir, "saved_args.pt")
+    if os.path.exists(saved_args_path):
+        try:
+            saved_args = torch.load(saved_args_path)
+        except Exception:
+            pass
+
+    return CompiledModel(cache_dir, name, backends, saved_args=saved_args)
 
 def _export_to_onnx(model, inputs, output_path, manifests):
     """
@@ -192,21 +219,67 @@ def _export_to_onnx(model, inputs, output_path, manifests):
     else:
         out_names = ["output_0"]
 
-    with TritonGlobalONNXExporter(manifests):
+    exporter = TritonGlobalONNXExporter(manifests)
+    with exporter:
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)
             warnings.filterwarnings("ignore", message=".*Converting a tensor to a Python.*")
             
-            torch.onnx.export(
-                model,
-                inputs,
-                output_path,
+            export_kwargs = dict(
                 export_params=True,
                 opset_version=17,
                 do_constant_folding=False, 
                 input_names=[f"input_{i}" for i in range(len(inputs))],
-                output_names=out_names # <--- DYNAMIC MULTI-OUTPUT MAPPING
+                output_names=out_names
             )
+            # Ensure classic TorchScript tracing in PyTorch 2.6+ when onnxscript is installed
+            try:
+                import inspect
+                sig = inspect.signature(torch.onnx.export)
+                if 'dynamo' in sig.parameters:
+                    export_kwargs['dynamo'] = False
+            except Exception:
+                pass
+
+            torch.onnx.export(
+                model,
+                inputs,
+                output_path,
+                **export_kwargs
+            )
+            _clean_onnx_graph(output_path)
+    return getattr(exporter, 'saved_args', None)
+
+def _clean_onnx_graph(onnx_path):
+    try:
+        import onnx
+        model = onnx.load(onnx_path)
+        graph = model.graph
+
+        producer = {}
+        for node in graph.node:
+            for out in node.output:
+                producer[out] = node
+
+        nodes_to_remove = set()
+        for node in list(graph.node):
+            if node.op_type in ('Expand', 'Reshape'):
+                inp_tensor = node.input[0]
+                out_tensor = node.output[0]
+                parent = producer.get(inp_tensor)
+                if parent and ('fused_' in parent.op_type or 'triton' in parent.op_type or 'kernel' in parent.op_type):
+                    for idx, p_out in enumerate(parent.output):
+                        if p_out == inp_tensor:
+                            parent.output[idx] = out_tensor
+                            nodes_to_remove.add(node.name)
+
+        if nodes_to_remove:
+            new_nodes = [n for n in graph.node if n.name not in nodes_to_remove]
+            graph.ClearField('node')
+            graph.node.extend(new_nodes)
+            onnx.save(model, onnx_path)
+    except Exception:
+        pass
 
 # def _export_to_onnx(model, inputs, output_path, manifests):
 #     """

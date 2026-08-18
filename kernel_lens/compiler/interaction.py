@@ -31,11 +31,13 @@ class AutoInteractionHandler(InteractionHandler):
     """A handler that attempts to guess based on heuristics, throwing an error if it fails."""
     
     def ask_tensor_kind(self, kernel_name: str, tensor_name: str, shape: tuple) -> str:
-        if 'out' in tensor_name.lower():
+        name_lower = tensor_name.lower()
+        if any(kw in name_lower for kw in ['out', 'dst', 'res', 'result', 'c_ptr', 'z_ptr']) or name_lower in ['c', 'z']:
             print(f"[Auto-Resolve] '{tensor_name}' mapped to OUTPUT.")
             return 'output'
-        elif 'in' in tensor_name.lower() or 'ptr' in tensor_name.lower():
-             print(f"[Auto-Resolve] '{tensor_name}' mapped to INPUT.")
-             return 'input'
+        elif 'in' in name_lower or name_lower in ['q', 'k', 'v', 'x', 'w', 'a', 'b', 'd', 'gamma', 'beta', 'cos', 'sin', 'scale'] or ('ptr' in name_lower and not any(kw in name_lower for kw in ['out', 'dst', 'c_ptr', 'z_ptr'])):
+            print(f"[Auto-Resolve] '{tensor_name}' mapped to INPUT.")
+            return 'input'
         else:
-            raise ValueError(f"Auto-resolution failed for tensor '{tensor_name}' in '{kernel_name}'. Please provide explicit mapping.")
+            print(f"[Auto-Resolve Fallback] '{tensor_name}' defaulted to INPUT.")
+            return 'input'

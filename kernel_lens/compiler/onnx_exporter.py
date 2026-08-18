@@ -2,6 +2,40 @@ import triton
 import inspect
 import torch
 from unittest.mock import patch
+_ONNX_NODE_CACHE = {}
+
+def get_onnx_node_class(kernel_name, manifest):
+    if kernel_name in _ONNX_NODE_CACHE:
+        return _ONNX_NODE_CACHE[kernel_name]
+        
+    out_args = [a for a in manifest.arguments if a.kind == 'output']
+    out_count = max(1, len(out_args))
+    
+    class TritonONNXNode(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, *args):
+            # args contain out_count target output tensors, followed by node_inputs
+            target_outs = args[:out_count]
+            if out_count > 1:
+                return tuple(t.new_zeros(t.shape) for t in target_outs)
+            else:
+                return target_outs[0].new_zeros(target_outs[0].shape)
+
+        @staticmethod
+        def symbolic(g, *args):
+            target_outs = args[:out_count]
+            node_inputs = args[out_count:]
+            res = g.op(f"triton_custom::{kernel_name}", *node_inputs, outputs=out_count)
+            if out_count > 1:
+                for i, r in enumerate(res):
+                    r.setType(target_outs[i].type())
+                return res
+            else:
+                res.setType(target_outs[0].type())
+                return res
+
+    _ONNX_NODE_CACHE[kernel_name] = TritonONNXNode
+    return TritonONNXNode
 
 class TritonGlobalONNXExporter:
     def __init__(self, manifests):
@@ -39,69 +73,56 @@ class TritonGlobalONNXExporter:
                     manifest = self.manifest_map[kernel_name]
                     
                     # 1. RUN THE REAL KERNEL FIRST
-                    # This populates the output memory with real math so the graph has valid side-effects
                     orig_getitem(jit_self, evaluated_grid)(*clean_args, **clean_kwargs)
                     
                     # 2. PREPARE ARGS FOR ONNX TRACING
-                    final_args = []
+                    from ..config import is_verbose
+                    if is_verbose():
+                        print(f"[ONNX EXPORT DEBUG] manifest.arguments:")
+                        for idx, a in enumerate(manifest.arguments):
+                            print(f"  arg {idx}: name='{a.name}', kind='{a.kind}', shape={a.shape}, dtype={a.dtype}")
+                    
+                    node_inputs = []
                     for arg_def in manifest.arguments:
+                        if arg_def.kind == 'output':
+                            continue
                         val = bound.arguments[arg_def.name]
                         if isinstance(val, torch.SymInt):
                             val = unwrap(val)
                         
-                        # CRITICAL FIX: Convert all scalars to Tensors!
-                        # ONNX `g.op` ignores raw Python integers. They must be Tensors to enter the graph.
-                        if isinstance(val, (int, float, bool)):
+                        target_device = args[0].device if (args and isinstance(args[0], torch.Tensor)) else 'cuda'
+                        if isinstance(val, torch.Tensor) and val.dim() == 0:
+                            dtype = torch.float32 if val.dtype in [torch.float32, torch.float64] else torch.int64
+                            val = val.to(device=target_device, dtype=dtype).unsqueeze(0)
+                        elif isinstance(val, (int, float, bool)):
                             dtype = torch.float32 if isinstance(val, float) else torch.int64
-                            val = torch.tensor([val], dtype=dtype, device='cuda' if torch.cuda.is_available() else 'cpu')
+                            val = torch.tensor([val], dtype=dtype, device=target_device)
                             
-                        final_args.append(val)
+                        node_inputs.append(val)
+                    
+                    self.saved_args = node_inputs
                         
-                    # 3. INJECT CUSTOM ONNX NODE
-                    class TritonONNXNode(torch.autograd.Function):
-                        @staticmethod
-                        def forward(ctx, *inputs):
-                            # Return clones to establish a new tracked node boundary in the graph
-                            outs = [inputs[i].clone() for i, a in enumerate(manifest.arguments) if a.kind == 'output']
-                            if not outs: return inputs[0].clone()
-                            return outs[0] if len(outs) == 1 else tuple(outs)
-
-                        @staticmethod
-                        def symbolic(g, *inputs):
-                            out_count = max(1, len([a for a in manifest.arguments if a.kind == 'output']))
-                            return g.op(f"triton_custom::{kernel_name}", *inputs, outputs=out_count)
-
-                    dynamic_anchor = None
-                    for a in final_args:
-                        if isinstance(a, torch.Tensor) and not isinstance(a, torch.nn.Parameter):
-                            dynamic_anchor = a
-                            break
-                            
-                    # 2. Defeat TensorRT's static weight folding
-                    if dynamic_anchor is not None:
-                        # Create a computationally free scalar 0.0 with a rigid DAG dependency
-                        zero_scalar = dynamic_anchor.reshape(-1)[0] * 0.0
-                        secured_args = []
-                        for a in final_args:
-                            if isinstance(a, torch.nn.Parameter):
-                                # Force TRT to treat the parameter as a dynamic execution buffer
-                                secured_args.append(a + zero_scalar.to(a.dtype))
-                            else:
-                                secured_args.append(a)
-                        final_args = secured_args
-
-                    res = TritonONNXNode.apply(*final_args)
+                    target_outs = [bound.arguments[a.name] for a in manifest.arguments if a.kind == 'output']
+                    if not target_outs:
+                        target_outs = [args[0]]
+                    ONNXNode = get_onnx_node_class(kernel_name, manifest)
+                    res = ONNXNode.apply(*target_outs, *node_inputs)
+                    if is_verbose():
+                        print(f"[ONNX EXPORT DEBUG] res shape: {res.shape if isinstance(res, torch.Tensor) else [r.shape for r in res]}")
                     
                     # 4. WIRE THE GRAPH TOGETHER
                     out_idx = [i for i, a in enumerate(manifest.arguments) if a.kind == 'output']
                     if out_idx:
                         if len(out_idx) == 1:
-                            bound.arguments[manifest.arguments[out_idx[0]].name].copy_(res)
+                            target_out = bound.arguments[manifest.arguments[out_idx[0]].name]
+                            print(f"[ONNX EXPORT DEBUG] copying res (shape {res.shape}) to target_out (shape {target_out.shape})")
+                            target_out.copy_(res)
                         else:
                             for i, idx in enumerate(out_idx):
-                                bound.arguments[manifest.arguments[idx].name].copy_(res[i])
+                                target_out = bound.arguments[manifest.arguments[idx].name]
+                                target_out.copy_(res[i])
                                 
-                    # CRITICAL FIX: Return the tracked tensor so PyTorch connects the graph!
+                    # CRITICAL FIX: Return the tracked tensor(s) so PyTorch connects the graph!
                     return res
                 
                 # Untraced Fallback (Normal Python execution)

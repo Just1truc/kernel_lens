@@ -1,0 +1,12 @@
+\contentsline {section}{\numberline {1}Introduction \& System Overview}{2}{section.1}%
+\contentsline {section}{\numberline {2}System Architecture Pipeline}{2}{section.2}%
+\contentsline {subsection}{\numberline {2.1}1. Symbolic Grid Tracing and Manifest Extraction}{2}{subsection.2.1}%
+\contentsline {section}{\numberline {3}Mathematical Logic and Memory Alignment Mechanics}{2}{section.3}%
+\contentsline {subsection}{\numberline {3.1}1. Dual-Way Layout Conversions ($\text {NCHW} \leftrightarrow \text {NHWC}$)}{2}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}2. Enforcing 16-Byte Memory Alignment}{3}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}3. PTX Parameter Binding and Dynamic Shared Memory}{3}{subsection.3.3}%
+\contentsline {section}{\numberline {4}Disambiguating Output Tensor Shapes vs. Launch Grid SymPy}{4}{section.4}%
+\contentsline {subsection}{\numberline {4.1}1. Structural Differences}{4}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}2. Register Unrolling Analysis}{4}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}3. Dual-Track SymPy Resolution}{5}{subsection.4.3}%
+\contentsline {section}{\numberline {5}Conclusion}{5}{section.5}%

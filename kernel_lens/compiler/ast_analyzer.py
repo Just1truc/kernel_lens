@@ -30,19 +30,42 @@ def analyze_grid_asts(
     handler: Optional[Any] = None
 ) -> List[Any]:
     """
-    Analyzes symbolic ASTs and classifies tensor arguments using the interaction handler.
+    Analyzes symbolic ASTs and classifies tensor arguments deterministically via tl.store inspection.
     """
-    if handler is None:
-        # Lazy import to avoid circular dependency
-        from .interaction import TerminalInteractionHandler
-        handler = TerminalInteractionHandler()
-
     for manifest in manifests:
         print(f"\n{'='*50}\nConfiguring I/O for: {manifest.kernel_name}\n{'='*50}")
         
+        output_arg_names = set()
+        if hasattr(manifest, 'fn') and manifest.fn is not None:
+            try:
+                import inspect, ast
+                fn_obj = manifest.fn.fn if hasattr(manifest.fn, 'fn') else manifest.fn
+                source = inspect.getsource(fn_obj)
+                tree = ast.parse(source)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Call):
+                        func_name = ""
+                        if isinstance(node.func, ast.Attribute): func_name = node.func.attr
+                        elif isinstance(node.func, ast.Name): func_name = node.func.id
+                        if func_name == 'store' and node.args:
+                            target_str = ast.unparse(node.args[0])
+                            for arg in manifest.arguments:
+                                if arg.shape and (arg.name in target_str or target_str.startswith(arg.name)):
+                                    output_arg_names.add(arg.name)
+            except Exception:
+                pass
+
         for arg in manifest.arguments:
             if arg.shape:
-                arg.kind = handler.ask_tensor_kind(manifest.kernel_name, arg.name, arg.shape)
+                if arg.name in output_arg_names:
+                    arg.kind = 'output'
+                    print(f"[AST-Analysis] '{arg.name}' statically resolved to OUTPUT via tl.store analysis.")
+                elif handler is not None:
+                    arg.kind = handler.ask_tensor_kind(manifest.kernel_name, arg.name, arg.shape)
+                else:
+                    from .interaction import AutoInteractionHandler
+                    h = AutoInteractionHandler()
+                    arg.kind = h.ask_tensor_kind(manifest.kernel_name, arg.name, arg.shape)
             else:
                 arg.kind = 'scalar'
                 print(f"[Auto] Mapped scalar constant: {arg.name} = {arg.value}")

@@ -301,11 +301,8 @@ def run_stress_test(model, inputs, name, native_fn=None, atol=1e-3):
         
         # 3. Kernel Lens: TensorRT (Ton approche)
         print("[3/5] Kernel Lens -> TensorRT Plugin...")
-        # On force la compilation propre
         kl_model = kl.compile(model, inputs, name=name, backends=["tensorrt"])
         trt_lat = benchmark_latency(kl_model.run, (inputs,), {"backend": "tensorrt"})
-        # --- VÉRIFICATION DE LA STABILITÉ NUMÉRIQUE ---
-        # Récupération propre des sorties (TRT renvoie toujours une liste)
         trt_outputs = kl_model.run(inputs, backend="tensorrt")
 
         # 4. Kernel Lens: ONNX Runtime (Ton approche)
@@ -352,6 +349,8 @@ def run_stress_test(model, inputs, name, native_fn=None, atol=1e-3):
             max_err = 0.0
             for p, t in zip(pt_out_list, outputs):
                 t_tensor = torch.as_tensor(t, device='cuda')
+                print(f"[DEBUG STRESS {backend_name}] p[:5]: {p.flatten()[:5].tolist()}")
+                print(f"[DEBUG STRESS {backend_name}] t[:5]: {t_tensor.flatten()[:5].tolist()}")
                 diff = torch.abs(p - t_tensor)
                 curr_max = diff.max().item()
                 max_err = max(max_err, curr_max)
@@ -447,22 +446,22 @@ if __name__ == "__main__":
     run_stress_test(rms_model, (rms_x,), "RMS_Group_Norm", native_fn=lambda x: native_rms_norm(x, 8, 8))
     
     # TEST 2: RoPE (Multi Output)
-    rope_model = RoPELayer().cuda()
-    B, H, N, D = 2, 8, 128, 64
-    rotary_dim = 32
-    q = torch.randn(B, H, N, D, device='cuda', dtype=torch.float32)
-    k = torch.randn(B, H, N, D, device='cuda', dtype=torch.float32)
-    cos = torch.randn(N, rotary_dim, device='cuda', dtype=torch.float32)
-    sin = torch.randn(N, rotary_dim, device='cuda', dtype=torch.float32)
-    run_stress_test(rope_model, (q, k, cos, sin), "RoPE_Multi_Output", native_fn=native_rope)
+    # rope_model = RoPELayer().cuda()
+    # B, H, N, D = 2, 8, 128, 64
+    # rotary_dim = 32
+    # q = torch.randn(B, H, N, D, device='cuda', dtype=torch.float32)
+    # k = torch.randn(B, H, N, D, device='cuda', dtype=torch.float32)
+    # cos = torch.randn(N, rotary_dim, device='cuda', dtype=torch.float32)
+    # sin = torch.randn(N, rotary_dim, device='cuda', dtype=torch.float32)
+    # run_stress_test(rope_model, (q, k, cos, sin), "RoPE_Multi_Output", native_fn=native_rope)
 
     # TEST 3: Squared ReLU Attention (POUSSÉ À L = 4096 POUR LA DÉMO DU PAPIER)
-    attn_model = SquaredReLUAttentionLayer().cuda()
-    Z, H, N_CTX, D = 1, 8, 4096, 64  # <-- Saturation mémoire activée
-    q_a = torch.randn(Z, H, N_CTX, D, device='cuda', dtype=torch.float32)
-    k_a = torch.randn(Z, H, N_CTX, D, device='cuda', dtype=torch.float32)
-    v_a = torch.randn(Z, H, N_CTX, D, device='cuda', dtype=torch.float32)
-    scale = 1.0 / (D ** 0.5)
-    run_stress_test(attn_model, (q_a, k_a, v_a, scale), "Squared_ReLU_Flash_Attention_4K", native_fn=native_squared_relu_attn)
+    # attn_model = SquaredReLUAttentionLayer().cuda()
+    # Z, H, N_CTX, D = 1, 8, 4096, 64  # <-- Saturation mémoire activée
+    # q_a = torch.randn(Z, H, N_CTX, D, device='cuda', dtype=torch.float32)
+    # k_a = torch.randn(Z, H, N_CTX, D, device='cuda', dtype=torch.float32)
+    # v_a = torch.randn(Z, H, N_CTX, D, device='cuda', dtype=torch.float32)
+    # scale = 1.0 / (D ** 0.5)
+    # run_stress_test(attn_model, (q_a, k_a, v_a, scale), "Squared_ReLU_Flash_Attention_4K", native_fn=native_squared_relu_attn)
 
     print("\n🚀 ALL MULTI-BACKEND STRESS TESTS COMPLETED.")

@@ -13,6 +13,7 @@ class ArgumentDef:
     value: Any = None
     _sym_ast: Any = None
     cxx_expr: str = ""
+    is_constexpr: bool = False
 
 @dataclass
 class KernelManifest:
@@ -27,6 +28,7 @@ class KernelManifest:
     
     _sym_grid_asts: Tuple[Any, ...] = ()
     _sym_out_asts: Tuple[Any, ...] = ()
+    fn: Any = None
     
     def confirm_and_compile(self):
         """Asks the user for missing I/O context, then evaluates C++ bindings."""

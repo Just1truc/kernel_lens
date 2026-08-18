@@ -80,21 +80,53 @@ class TritonSymIntTracingContext:
             
             # --- PTX EXTRACTION ---
             caches = getattr(jit_self, 'cache', getattr(jit_self, 'device_caches', {}))
+            constexpr_arg_indices = set()
             for key_or_dev, value in caches.items():
-                candidates = []
+                items_to_check = []
                 if isinstance(value, tuple) and len(value) > 0 and isinstance(value[0], dict):
-                    candidates = value[0].values()
+                    items_to_check = list(value[0].items())
                 elif isinstance(value, dict):
-                    candidates = value.values()
-                elif isinstance(value, list):
-                    candidates = value
-                else:
-                    candidates = [value]
+                    items_to_check = list(value.items())
                     
-                for compiled in candidates:
+                for key_tuple, compiled in items_to_check:
                     if hasattr(compiled, 'asm') and 'ptx' in compiled.asm:
                         ptx = compiled.asm['ptx']
                         
+                        if isinstance(key_tuple, str) and key_tuple.startswith('['):
+                            import ast
+                            try:
+                                clean_str = key_tuple[:key_tuple.rfind(']')+1]
+                                parsed_key = ast.literal_eval(clean_str)
+                                for idx, arg_spec in enumerate(parsed_key):
+                                    if isinstance(arg_spec, tuple) and len(arg_spec) > 0 and arg_spec[0] == 'constexpr':
+                                        constexpr_arg_indices.add(idx)
+                                    elif isinstance(arg_spec, str) and arg_spec == 'constexpr':
+                                        constexpr_arg_indices.add(idx)
+                            except Exception as e:
+                                print(f"[TRACER DEBUG ERROR] ast.literal_eval failed: {e}")
+                        elif isinstance(key_tuple, (tuple, list)):
+                            for idx, arg_spec in enumerate(key_tuple):
+                                if isinstance(arg_spec, tuple) and len(arg_spec) > 0 and arg_spec[0] == 'constexpr':
+                                    constexpr_arg_indices.add(idx)
+                                elif isinstance(arg_spec, str) and arg_spec == 'constexpr':
+                                    constexpr_arg_indices.add(idx)
+                        
+                        if hasattr(compiled, 'src'):
+                            if hasattr(compiled.src, 'constants') and isinstance(compiled.src.constants, dict):
+                                for c_key in compiled.src.constants.keys():
+                                    if isinstance(c_key, (tuple, list)) and len(c_key) > 0:
+                                        constexpr_arg_indices.add(c_key[0])
+                                    elif isinstance(c_key, int):
+                                        constexpr_arg_indices.add(c_key)
+                                    elif isinstance(c_key, str):
+                                        for p_idx, p_name in enumerate(sig.parameters.keys()):
+                                            if p_name == c_key:
+                                                constexpr_arg_indices.add(p_idx)
+                            if hasattr(compiled.src, 'signature') and isinstance(compiled.src.signature, dict):
+                                for c_idx, (p_name, p_type) in enumerate(compiled.src.signature.items()):
+                                    if p_type == 'constexpr':
+                                        constexpr_arg_indices.add(c_idx)
+
                         def get_meta(prop, default=0):
                             if hasattr(compiled, 'metadata') and hasattr(compiled.metadata, prop):
                                 return getattr(compiled.metadata, prop)
@@ -103,12 +135,17 @@ class TritonSymIntTracingContext:
                             return default
                             
                         mangled_name = get_meta('name', mangled_name)
+                        num_warps = get_meta('num_warps', kwargs.get('num_warps', 4)) or 4
                         shared_memory_bytes = get_meta('shared', 0)
-                        num_warps = get_meta('num_warps', 0)
+                        from ..config import is_verbose
+                        if is_verbose():
+                            print(f"[TRACER DEBUG] Captured shared_memory_bytes: {shared_memory_bytes}, num_warps: {num_warps}, constexpr_indices: {constexpr_arg_indices}")
                         
-                        if not num_warps and ptx:
+                        if ptx and num_warps == 4:
                             match = re.search(r'\.reqntid\s+(\d+)', ptx)
                             if match: num_warps = int(match.group(1)) // 32
+                        if not num_warps:
+                            num_warps = 4
                         break
                 if ptx:
                     match = re.search(r'\.visible\s+\.entry\s+([a-zA-Z0-9_]+)\(', ptx)
@@ -118,12 +155,13 @@ class TritonSymIntTracingContext:
             # --- ABI SIGNATURE GENERATION ---
             manifest_args = []
             for i, (name, value) in enumerate(bound_args.arguments.items()):
-                # Skip tl.constexpr arguments as they are baked into the PTX
+                # Skip tl.constexpr annotations
                 if sig.parameters[name].annotation is getattr(tl, 'constexpr', None):
                     continue
 
+                is_constexpr = (i in constexpr_arg_indices)
                 if isinstance(value, torch.Tensor):
-                    manifest_args.append(ArgumentDef(name, "unknown", tuple(value.shape), strides=tuple(value.stride()), dtype=str(value.dtype)))
+                    manifest_args.append(ArgumentDef(name, "unknown", tuple(value.shape), strides=tuple(value.stride()), dtype=str(value.dtype), is_constexpr=is_constexpr))
                 elif isinstance(value, (int, float, torch.SymInt, bool)):
                     concrete_val = value
                     if isinstance(value, torch.SymInt):
@@ -132,7 +170,7 @@ class TritonSymIntTracingContext:
                             concrete_val = value.node.shape_env.size_hint(value.node.expr)
                         concrete_val = concrete_val or 1
                     
-                    manifest_args.append(ArgumentDef(name, "scalar", (), (), str(type(concrete_val).__name__), concrete_val, _sym_ast=value))
+                    manifest_args.append(ArgumentDef(name, "scalar", (), (), str(type(concrete_val).__name__), concrete_val, _sym_ast=value, is_constexpr=is_constexpr))
             
             manifest = KernelManifest(
                 kernel_name=mangled_name,
@@ -141,7 +179,8 @@ class TritonSymIntTracingContext:
                 num_warps=num_warps,
                 arguments=manifest_args,
                 _sym_grid_asts=evaluated_grid,
-                _sym_out_asts=out_tensors[0].shape if getattr(out_tensors[0], 'shape', None) else ()
+                _sym_out_asts=out_tensors[0].shape if getattr(out_tensors[0], 'shape', None) else (),
+                fn=jit_self
             )
             _CAPTURED_MANIFESTS.append(manifest)
             

@@ -6,7 +6,7 @@ import os
 from ..compiler.manifest import KernelManifest
 
 class TensorRTPluginGenerator:
-    def __init__(self, manifests: List[KernelManifest], plugin_namespace: str = "custom", plugin_version: str = "1"):
+    def __init__(self, manifests: List[KernelManifest], plugin_namespace: str = "triton_custom", plugin_version: str = "1"):
         self.manifests = manifests
         self.plugin_namespace = plugin_namespace
         self.plugin_version = plugin_version
@@ -23,6 +23,23 @@ class TensorRTPluginGenerator:
 
         supports_format_cxx = "return inOut[pos].format == nvinfer1::TensorFormat::kLINEAR;"
         
+        output_dim_cases = []
+        out_args = [a for a in manifest.arguments if a.kind == 'output']
+        for out_idx, out_arg in enumerate(out_args):
+            output_dim_cases.append(f"if (outputIndex == {out_idx}) {{")
+            output_dim_cases.append(f"    nvinfer1::DimsExprs res;")
+            output_dim_cases.append(f"    res.nbDims = {len(out_arg.shape)};")
+            for d_idx, d in enumerate(out_arg.shape):
+                try:
+                    d_int = int(d)
+                    output_dim_cases.append(f"    res.d[{d_idx}] = exprBuilder.constant({d_int});")
+                except Exception:
+                    output_dim_cases.append(f"    res.d[{d_idx}] = inputs[0].d[{d_idx}];")
+            output_dim_cases.append("    return res;")
+            output_dim_cases.append("}")
+        
+        get_out_dims_cxx = "\n        ".join(output_dim_cases) if output_dim_cases else "return inputs[0];"
+
         tpl = f'''
 #ifndef {manifest.kernel_name.upper()}_PLUGIN_H
 #define {manifest.kernel_name.upper()}_PLUGIN_H
@@ -47,7 +64,7 @@ public:
     }}
     
     nvinfer1::DimsExprs getOutputDimensions(int outputIndex, const nvinfer1::DimsExprs* inputs, int nbInputs, nvinfer1::IExprBuilder& exprBuilder) noexcept override {{
-        // Fallback: Safely mirror the first input's dimensions
+        {get_out_dims_cxx}
         return inputs[0]; 
     }}
     
@@ -96,7 +113,6 @@ private:
     nvinfer1::PluginFieldCollection mFC;
     std::vector<nvinfer1::PluginField> mPluginAttributes;
 }};
-REGISTER_TENSORRT_PLUGIN({plugin_name}Creator);
 
 }} // namespace {self.plugin_namespace}
 
@@ -107,7 +123,7 @@ REGISTER_TENSORRT_PLUGIN({plugin_name}Creator);
     def _generate_kernel_cu(self, manifest: KernelManifest) -> str:
         plugin_name = f"{manifest.kernel_name}Plugin"
         ptx_encoded = json.dumps(manifest.ptx)
-        block_size = manifest.num_warps * 32
+        block_size = (manifest.num_warps if manifest.num_warps > 0 else 4) * 32
         
         scalars = [arg for arg in manifest.arguments if arg.kind == 'scalar']
         nb_outputs = sum(1 for arg in manifest.arguments if arg.kind == 'output')
@@ -160,93 +176,72 @@ REGISTER_TENSORRT_PLUGIN({plugin_name}Creator);
         clone_lines = [f"plugin->m_{arg.name} = this->m_{arg.name};" for arg in scalars]
         clone_cpp = "\n    ".join(clone_lines)
 
-        ptx_params = re.findall(r'\.param\s+\.([a-z0-9]+).*?([a-zA-Z0-9_]+)(?:,|\s*\))', manifest.ptx)
-        
+        entry_match = re.search(r'\.entry\s+[a-zA-Z0-9_]+\s*\((.*?)\)\s*(?:\.reqntid|\{)', manifest.ptx, re.DOTALL)
+        entry_sig = entry_match.group(1) if entry_match else manifest.ptx
+
+        ptx_params = []
+        for p in entry_sig.split('.param'):
+            p = p.strip().rstrip(',').rstrip(')').strip()
+            if not p:
+                continue
+            parts = p.split()
+            if parts:
+                p_ident = parts[-1]
+                p_decl = " ".join(parts[:-1])
+                ptx_params.append((p_decl, p_ident))
+        active_args = [arg for arg in manifest.arguments if not getattr(arg, 'is_constexpr', False)]
+        ptr_args = [arg for arg in active_args if arg.kind in ('input', 'output')]
+        scalar_args = [arg for arg in active_args if arg.kind == 'scalar']
+        num_ptr_args = len(ptr_args)
+
         ptx_ordered_slots = []
-        for p_type, p_ident in ptx_params:
+        for s_idx, (p_decl, p_ident) in enumerate(ptx_params):
             match = re.search(r'_param_(\d+)$', p_ident)
             if match:
                 p_ident = match.group(1)
-                
-            if "32" in p_type and "f" not in p_type: c_type = "int32_t"
-            elif "64" in p_type and "f" not in p_type: c_type = "int64_t"
-            elif "f32" in p_type: c_type = "float"
-            elif "f64" in p_type: c_type = "double"
+            is_ptr = ("ptr" in p_decl) or (s_idx < num_ptr_args)
+            if is_ptr: c_type = "void*"
+            elif "32" in p_decl and "f" not in p_decl: c_type = "int32_t"
+            elif "64" in p_decl and "f" not in p_decl: c_type = "int64_t"
+            elif "f32" in p_decl: c_type = "float"
+            elif "f64" in p_decl: c_type = "double"
             else: c_type = "int32_t"
-            
-            ptx_ordered_slots.append({"type": c_type, "ident": p_ident})
+            ptx_ordered_slots.append({"type": c_type, "ident": p_ident, "is_ptr": is_ptr})
 
-        arg_setup_lines = []
         num_ptx_slots = len(ptx_ordered_slots)
-        
-        input_list = [arg for arg in manifest.arguments if arg.kind == 'input']
-        output_list = [arg for arg in manifest.arguments if arg.kind == 'output']
-        scalar_list = [arg for arg in manifest.arguments if arg.kind == 'scalar']
-        
-        input_idx, output_idx, scalar_idx = 0, 0, 0
-        
+        in_counter = 0
+        out_counter = 0
+        active_args = [a for a in manifest.arguments if not getattr(a, 'is_constexpr', False)]
+        in_counter = 0
+        out_counter = 0
+        arg_setup_lines = []
+
         for slot_idx, slot in enumerate(ptx_ordered_slots):
             c_type = slot["type"]
-            
-            if input_idx < len(input_list):
-                arg_setup_lines.append(f"const void* arg_{slot_idx} = inputs[{input_idx}];")
-                arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&arg_{slot_idx};")
-                input_idx += 1
-                continue
-            elif output_idx < len(output_list):
-                arg_setup_lines.append(f"void* arg_{slot_idx} = outputs[{output_idx}];")
-                arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&arg_{slot_idx};")
-                output_idx += 1
-                continue
-                
-            if scalar_idx < len(scalar_list):
-                while scalar_idx < len(scalar_list) and scalar_list[scalar_idx].value == 1 and c_type in ["int32_t", "int64_t"]:
-                    scalar_idx += 1
-                    
-                if scalar_idx < len(scalar_list):
-                    arg = scalar_list[scalar_idx]
-                    expr = getattr(arg, 'cxx_expr', '') or f"m_{arg.name}"
-                    arg_setup_lines.append(f"{c_type} arg_{slot_idx} = {expr};")
-                    arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&arg_{slot_idx};")
-                    scalar_idx += 1
-                    continue
-                    
-            arg_setup_lines.append(f"{c_type} implicit_pad_{slot_idx} = 0;")
-            arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&implicit_pad_{slot_idx};")
+            arg = active_args[slot_idx] if slot_idx < len(active_args) else None
 
-        # --- KERNEL PARAMS PACKING (TRITON DCE AVOIDANCE) ---
-        # --- KERNEL PARAMS PACKING (TRITON DCE AVOIDANCE) ---
-        args_packing = []
-        in_idx = 0
-        out_idx = 0
-        
-        # --- KERNEL PARAMS PACKING (TRITON DCE AVOIDANCE) ---
-        args_packing = []
-        # On crée une vraie variable en mémoire contenant un pointeur nul
-        args_packing.append("void* dummy_ptr = nullptr;")
-        in_idx = 0
-        out_idx = 0
-        
-        for arg in manifest.arguments:
-            if arg.kind == 'input':
-                args_packing.append(f"kernelParams_vec.push_back((void*)&inputs[{in_idx}]);")
-                in_idx += 1
-            elif arg.kind == 'output':
-                args_packing.append(f"kernelParams_vec.push_back((void*)&outputs[{out_idx}]);")
-                out_idx += 1
-            elif arg.kind == 'scalar':
-                val = arg.value
-                # L'heuristique Triton equal_to_1 supprime l'argument du PTX
-                if val == 1:
-                    args_packing.append(f"// Triton equal_to_1 DCE: Skipped {arg.name}")
+            if slot["is_ptr"] or (arg and arg.kind in ('input', 'output')):
+                if arg and arg.kind == 'input':
+                    arg_setup_lines.append(f"static thread_local const void* tmp_ptr_{slot_idx}; tmp_ptr_{slot_idx} = (const void*)inputs[{in_counter}];")
+                    arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_ptr_{slot_idx};")
+                    in_counter += 1
+                elif arg and arg.kind == 'output':
+                    arg_setup_lines.append(f"static thread_local void* tmp_ptr_{slot_idx}; tmp_ptr_{slot_idx} = (void*)outputs[{out_counter}];")
+                    arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_ptr_{slot_idx};")
+                    out_counter += 1
                 else:
-                    args_packing.append(f"kernelParams_vec.push_back((void*)&m_{arg.name});")
-                    
-        # On remplit la fin de la signature avec l'ADRESSE de notre pointeur nul
-        pad_str = f"while(kernelParams_vec.size() < {len(manifest.arguments)}) kernelParams_vec.push_back((void*)&dummy_ptr);"
-        args_packing.append(pad_str)
-        
-        kernel_params_cpp = "\n    ".join(args_packing)
+                    arg_setup_lines.append(f"static thread_local void* tmp_null_{slot_idx} = nullptr;")
+                    arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_null_{slot_idx};")
+            else:
+                if arg and arg.kind == 'scalar':
+                    expr = getattr(arg, 'cxx_expr', '') or f"m_{arg.name}"
+                    scalar_ctype = "int64_t" if "64" in str(arg.dtype) else ("float" if "float" in str(arg.dtype) else "int32_t")
+                    arg_setup_lines.append(f"static thread_local {scalar_ctype} tmp_scalar_{slot_idx}; tmp_scalar_{slot_idx} = ({scalar_ctype})({expr});")
+                    arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_scalar_{slot_idx};")
+                else:
+                    arg_setup_lines.append(f"static thread_local {c_type} tmp_scalar_{slot_idx} = 0;")
+                    arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_scalar_{slot_idx};")
+
 
         # --- DYNAMIC OUTPUT DATATYPES ---
         output_type_lines = []
@@ -310,6 +305,7 @@ int {plugin_name}::initialize() noexcept {{
         
         res = cuModuleGetFunction(&mKernel, mModule, "{manifest.kernel_name}");
         if (res != CUDA_SUCCESS) return -1;
+        cuFuncSetAttribute(mKernel, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, {manifest.shared_memory_bytes});
     }}
     return 0;
 }}
@@ -323,30 +319,17 @@ void {plugin_name}::terminate() noexcept {{
 
 int {plugin_name}::enqueue(const nvinfer1::PluginTensorDesc* inputDesc, const nvinfer1::PluginTensorDesc* outputDesc, const void* const* inputs, void* const* outputs, void* workspace, cudaStream_t stream) noexcept {{
     if (!mKernel) this->initialize();
-    
+
     unsigned int grid_x = std::max(1u, (unsigned int)({grid_x_cxx}));
     unsigned int grid_y = std::max(1u, (unsigned int)({grid_y_cxx}));
     unsigned int grid_z = std::max(1u, (unsigned int)({grid_z_cxx}));
     unsigned int block_x = std::max(1u, (unsigned int)({block_size}));
-    
+
     void* kernelParams[{num_ptx_slots}];
     {dynamic_args_cpp}
-    
-    std::vector<void*> kernelParams_vec;
-    /*for(int i = 0; i < {num_ptx_slots}; i++) {{
-        kernelParams_vec.push_back(kernelParams[i]);
-    }}*/
-    {kernel_params_cpp}
-    
-    CUresult launch_status = cuLaunchKernel(mKernel, grid_x, grid_y, grid_z, block_x, 1, 1, {manifest.shared_memory_bytes}, stream, kernelParams_vec.data(), nullptr);
-    /*printf("=======================================\\n");
-    printf("[TRT C++ DEBUG] Kernel Enqueue Fired!\\n");
-    for (size_t i = 0; i < kernelParams_vec.size(); i++) {{
-        void* actual_ptr = *(void**)kernelParams_vec[i]; 
-        printf("[TRT C++ DEBUG] Argument %zu VRAM Address: %p\\n", i, actual_ptr);
-    }}
-    printf("=======================================\\n");*/
-    
+
+    cuLaunchKernel(mKernel, grid_x, grid_y, grid_z, block_x, 1, 1, {manifest.shared_memory_bytes}, stream, kernelParams, nullptr);
+
     return 0;
 }}
 
@@ -424,7 +407,11 @@ nvinfer1::IPluginV2* {plugin_name}Creator::deserializePlugin(const char* name, c
 void {plugin_name}Creator::setPluginNamespace(const char* pluginNamespace) noexcept {{ mNamespace = pluginNamespace; }}
 const char* {plugin_name}Creator::getPluginNamespace() const noexcept {{ return mNamespace.c_str(); }}
 
+REGISTER_TENSORRT_PLUGIN({plugin_name}Creator);
+
 }} // namespace {self.plugin_namespace}
+
+
 '''
         return textwrap.dedent(tpl).strip()
     

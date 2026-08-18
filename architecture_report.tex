@@ -1,0 +1,219 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{microtype}
+
+\geometry{margin=1in}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+\title{\textbf{KernelLens: Deep Architecture Walkthrough and Mathematical Logic of Triton-to-ONNX/TensorRT Fusion}}
+\author{\textbf{Antigravity AI Agent} \\ \textit{Google DeepMind Team}}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report provides a formal, comprehensive architectural specification and mathematical walkthrough of the \texttt{KernelLens} compilation and execution pipeline. \texttt{KernelLens} dynamically extracts custom PyTorch Triton kernels, evaluates dynamic execution grids via symbolic AST tracing, handles strict 16-byte CUDA vector memory alignment, maps PTX entry parameters to C++ runtime bindings, and manages transparent dual-way layout transformations ($\text{NCHW} \leftrightarrow \text{NHWC}$).
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction \& System Overview}
+The primary objective of \texttt{KernelLens} is to bridge the gap between high-level PyTorch models containing custom Triton kernels and production inference engines (ONNX Runtime and NVIDIA TensorRT). High-performance custom Triton kernels often leverage non-standard memory access patterns, dynamic work-grid launches, dynamic shared memory allocations, and implicit stride/layout requirements.
+
+\texttt{KernelLens} automates the compilation and runtime binding through five core stages:
+\begin{enumerate}
+    \item \textbf{AST \& Symbolic Tracing:} Capturing tensor shapes, strides, and dynamic grid dimensions from PyTorch module invocations.
+    \item \textbf{Kernel Manifest Synthesis:} Cataloging input/output tensors, scalar constants, block sizes, and shared memory requirements.
+    \item \textbf{Dynamic Code Generation (\texttt{ort\_gen.py}):} Synthesizing C++ CUDA custom operators compliant with ONNX Runtime and TensorRT plugin APIs.
+    \item \textbf{Strict Memory Alignment \& Staging:} Enforcing 16-byte alignment ($\text{ptr} \pmod{16} == 0$) and layout transformation kernels.
+    \item \textbf{PTX Launch Integration:} Dynamic parameter packing matching PTX entry signatures and dynamic shared memory allocation via CUDA Driver API calls.
+\end{enumerate}
+
+---
+
+\section{System Architecture Pipeline}
+
+\subsection{1. Symbolic Grid Tracing and Manifest Extraction}
+When a user module is evaluated, Triton kernel launch grids depend on dynamic input dimensions (e.g., batch size $N$, spatial dimensions $H, W$, channel counts $C$). \texttt{KernelLens} intercepts tensor properties by overriding \texttt{torch.Tensor.shape} and \texttt{torch.Tensor.size()} with symbolic variables $s_0, s_1, s_2, \dots$ powered by SymPy.
+
+Given a dynamic grid tuple $\text{grid}(x, y, z) = (g_x(s_i), g_y(s_i), g_z(s_i))$, the compiler translates symbolic expressions into C++ evaluation code:
+\begin{equation}
+\text{grid\_x} = \max\left(1u, \left\lfloor g_x(\text{dim\_values})\right\rfloor\right)
+\end{equation}
+
+---
+
+\section{Mathematical Logic and Memory Alignment Mechanics}
+
+\subsection{1. Dual-Way Layout Conversions ($\text{NCHW} \leftrightarrow \text{NHWC}$)}
+Standard ONNX models exchange tensors in $\text{NCHW}$ format $(N, C, H, W)$. However, optimized Triton kernels (such as fused sequential convolutions) compute over $\text{NHWC}$ memory ordering ($\text{channels\_last}$).
+
+For a tensor with dimensions $(N, C, H, W)$, the linear byte offset under $\text{NCHW}$ layout is defined as:
+\begin{equation}
+\text{Offset}_{\text{NCHW}}(n, c, h, w) = n \cdot (C \cdot H \cdot W) + c \cdot (H \cdot W) + h \cdot W + w
+\end{equation}
+Conversely, the physical address offset under $\text{NHWC}$ layout is defined as:
+\begin{equation}
+\text{Offset}_{\text{NHWC}}(n, c, h, w) = n \cdot (H \cdot W \cdot C) + h \cdot (W \cdot C) + w \cdot C + c
+\end{equation}
+
+To maintain numerical compatibility without requiring modifications to the upstream model, \texttt{KernelLens} synthesizes high-throughput lightweight CUDA conversion kernels inside the C++ plugin layer:
+
+\begin{lstlisting}[language=C++]
+__global__ void nchw_to_nhwc_cuda_kernel(const float* __restrict__ src, float* __restrict__ dst, int N, int C, int H, int W) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = N * C * H * W;
+    if (idx >= total) return;
+    int w = idx % W;
+    int tmp = idx / W;
+    int h = tmp % H;
+    int tmp2 = tmp / H;
+    int c = tmp2 % C;
+    int n = tmp2 / C;
+    int nhwc_idx = n * (H * W * C) + h * (W * C) + w * C + c;
+    dst[nhwc_idx] = src[idx];
+}
+\end{lstlisting}
+
+Output tensors computed by the kernel in $\text{NHWC}$ format are restored back to standard $\text{NCHW}$ format using the inverse kernel \texttt{nhwc\_to\_nchw\_cuda\_kernel}.
+
+---
+
+\subsection{2. Enforcing 16-Byte Memory Alignment}
+Triton GPU instruction generation utilizes vectorized memory loads (\texttt{ld.global.v4.b32} or 128-bit SIMD registers). Vectorized 128-bit operations require that starting memory addresses be strictly aligned to 16 bytes:
+\begin{equation}
+\text{Address} \pmod{16} \equiv 0
+\end{equation}
+
+If an incoming pointer $\mathbf{P}_{\text{raw}}$ provided by ONNX Runtime or TensorRT fails this condition:
+\begin{lstlisting}[language=C++]
+if (reinterpret_cast<uintptr_t>(raw_ptr) % 16 != 0) {
+    if (aligned_buf == nullptr || aligned_buf_size < nbytes) {
+        if (aligned_buf) cudaFree(aligned_buf);
+        cudaMalloc(&aligned_buf, nbytes);
+        aligned_buf_size = nbytes;
+    }
+    cudaMemcpyAsync(aligned_buf, raw_ptr, nbytes, cudaMemcpyDeviceToDevice, stream);
+    arg_ptr = aligned_buf;
+}
+\end{lstlisting}
+
+---
+
+\subsection{3. PTX Parameter Binding and Dynamic Shared Memory}
+Triton's LLVM NVPTX compiler backend optimizes PTX function signatures by eliminating dead/constant scalar parameters and promoting 64-bit integer address arithmetic.
+
+The generated PTX function header declares explicit argument types:
+\begin{lstlisting}[language=SQL]
+.visible .entry _fused_seq_conv_nhwc_kernel(
+    .param .u64 .ptr .global .align 1 _fused_seq_conv_nhwc_kernel_param_0,
+    .param .u64 .ptr .global .align 1 _fused_seq_conv_nhwc_kernel_param_1,
+    .param .u64 .ptr .global .align 1 _fused_seq_conv_nhwc_kernel_param_2,
+    .param .u32 _fused_seq_conv_nhwc_kernel_param_3,
+    ...
+    .param .u64 .ptr .global .align 1 _fused_seq_conv_nhwc_kernel_param_15
+)
+\end{lstlisting}
+
+To prevent parameter offset corruption during CUDA driver launch, \texttt{KernelLens}:
+\begin{enumerate}
+    \item Parses the exact PTX entry declaration to determine type bit-widths (\texttt{.u64} vs \texttt{.u32}).
+    \item Packs parameter addresses into \texttt{std::vector<void*> kp} matching the expected memory width.
+    \item Configures dynamic shared memory attributes via \texttt{cuFuncSetAttribute}:
+    \begin{equation}
+    \text{cuFuncSetAttribute}\left(mKernel, \text{CU\_FUNC\_ATTRIBUTE\_MAX\_DYNAMIC\_SHARED\_SIZE\_BYTES}, S_{\text{shared}}\right)
+    \end{equation}
+    \item Invokes \texttt{cuLaunchKernel} with stream synchronization.
+\end{enumerate}
+
+---
+
+\section{Disambiguating Output Tensor Shapes vs. Launch Grid SymPy}
+
+A common point of ambiguity is why \texttt{KernelLens} cannot simply use the output tensor's SymPy shape expression to compute the GPU launch grid dimensions ($\text{grid\_z}$).
+
+\subsection{1. Structural Differences}
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Property} & \textbf{Output Tensor SymPy Shape} & \textbf{Launch Grid SymPy (\texttt{grid\_fn})} \\ \midrule
+\textbf{Purpose} & Buffer allocation size (\texttt{cudaMalloc}) & GPU hardware block launch count \\
+\textbf{Scope} & High-level model tensor geometry & Internal kernel thread/register tiling \\
+\textbf{Formula} & $(N, 4C, H, W) \implies (1, 512, 64, 64)$ & $\text{cdiv}(C, \text{BLOCK\_SIZE\_OC}) \implies 1$ \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of Output Tensor SymPy vs. Launch Grid SymPy.}
+\end{table}
+
+\subsection{2. Register Unrolling Analysis}
+Consider a fused sequential convolution kernel where a single thread block unrolls 4 output channel tiles in GPU registers:
+\begin{align}
+\text{acc}_0 &\gets \text{Channels }[0, 128) \\
+\text{acc}_1 &\gets \text{Channels }[128, 256) \\
+\text{acc}_2 &\gets \text{Channels }[256, 384) \\
+\text{acc}_3 &\gets \text{Channels }[384, 512)
+\end{align}
+
+Because one block ($\text{pid\_oc} = 0$) processes all 512 channels internally:
+\begin{equation}
+\text{grid\_z}_{\text{correct}} = \left\lceil \frac{\text{channels}}{\text{BLOCK\_SIZE\_OC}} \right\rceil = \left\lceil \frac{128}{128} \right\rceil = 1
+\end{equation}
+
+If the code generator incorrectly derived $\text{grid\_z}$ directly from the output tensor shape ($512$ channels):
+\begin{equation}
+\text{grid\_z}_{\text{flawed}} = \left\lceil \frac{\text{output\_channels}}{\text{BLOCK\_SIZE\_OC}} \right\rceil = \left\lceil \frac{512}{128} \right\rceil = 4
+\end{equation}
+
+Launching $\text{grid\_z} = 4$ forces thread block $\text{pid\_oc} = 3$ to attempt reading group 3 ($\text{acc}_3$):
+\begin{equation}
+\text{Channel Index} = 3 \cdot \text{channels} + 3 \cdot \text{channels} = 384 + 384 = 768
+\end{equation}
+Because the weight tensor only has 512 channels, reading index 768 triggers an out-of-bounds illegal address access fault on the GPU, manifesting as \texttt{CUDA failure 716: misaligned address}.
+
+\subsection{3. Dual-Track SymPy Resolution}
+To guarantee mathematical correctness, \texttt{KernelLens} uses a dual-track SymPy evaluation pipeline:
+\begin{enumerate}
+    \item \textbf{Tensor Allocation Track:} Uses the output tensor's SymPy shape expression to evaluate \texttt{out\_dims} for \texttt{ctx.GetOutput(...)}.
+    \item \textbf{Kernel Dispatch Track:} Uses the dynamic lambda function captured directly from the \texttt{@triton.jit} invocation tuple to evaluate $(\text{grid\_x}, \text{grid\_y}, \text{grid\_z})$.
+\end{enumerate}
+
+---
+
+\section{Conclusion}
+The \texttt{KernelLens} framework achieves end-to-end automation for integrating dynamic PyTorch Triton kernels into enterprise ONNX Runtime and TensorRT pipelines. By combining symbolic dynamic grid resolution, 16-byte CUDA vector alignment, automated layout conversion kernels, and rigorous PTX parameter binding, it provides robust execution stability and maximum inference performance.
+
+\end{document}
