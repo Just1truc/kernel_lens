@@ -39,7 +39,11 @@ def get_onnx_node_class(kernel_name, manifest):
 
 class TritonGlobalONNXExporter:
     def __init__(self, manifests):
-        self.manifest_map = {m.kernel_name: m for m in manifests}
+        self.manifest_map = {}
+        for m in manifests:
+            if hasattr(m, 'fn') and m.fn is not None:
+                self.manifest_map[m.fn.__name__] = m
+            self.manifest_map[m.kernel_name] = m
         self.patches = []
 
     def __enter__(self):
@@ -50,7 +54,9 @@ class TritonGlobalONNXExporter:
             
             def wrapper(*args, **kwargs):
                 sig = inspect.signature(jit_self.fn)
-                bound = sig.bind(*args, **kwargs)
+                triton_args = {'grid', 'num_warps', 'num_stages', 'num_ctas', 'enable_warp_illusions', 'cluster_dims', 'stream', 'device', 'warmup'}
+                clean_kwargs = {k: v for k, v in kwargs.items() if k not in triton_args}
+                bound = sig.bind(*args, **clean_kwargs)
                 bound.apply_defaults()
                 
                 meta_kwargs = {k: v for k, v in bound.arguments.items()}
@@ -105,7 +111,7 @@ class TritonGlobalONNXExporter:
                     target_outs = [bound.arguments[a.name] for a in manifest.arguments if a.kind == 'output']
                     if not target_outs:
                         target_outs = [args[0]]
-                    ONNXNode = get_onnx_node_class(kernel_name, manifest)
+                    ONNXNode = get_onnx_node_class(manifest.kernel_name, manifest)
                     res = ONNXNode.apply(*target_outs, *node_inputs)
                     if is_verbose():
                         print(f"[ONNX EXPORT DEBUG] res shape: {res.shape if isinstance(res, torch.Tensor) else [r.shape for r in res]}")

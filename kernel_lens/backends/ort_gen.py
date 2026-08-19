@@ -123,6 +123,8 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
         arg_setup_lines.append("std::vector<int64_t> dim_values = info.GetShape();")
         
         import re
+        fn_match = re.search(r'\.entry\s+([a-zA-Z0-9_]+)', manifest.ptx)
+        ptx_entry_name = fn_match.group(1) if fn_match else manifest.kernel_name
         
         # --- ROBUST GRID EVALUATION ---
         grid_strs = []
@@ -164,16 +166,20 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
                 p_decl = " ".join(parts[:-1])
                 ptx_params.append((p_decl, p_ident))
         num_ptr_args = len([a for a in manifest.arguments if not getattr(a, 'is_constexpr', False) and a.kind in ('input', 'output')])
+        active_args = [a for a in manifest.arguments if not getattr(a, 'is_constexpr', False)]
         ptx_ordered_slots = []
         for p_idx, (p_decl, p_ident) in enumerate(ptx_params):
             match = re.search(r'_param_(\d+)$', p_ident)
             param_num = int(match.group(1)) if match else p_idx
-            
-            is_ptr = ("ptr" in p_decl) or (p_idx < num_ptr_args)
+            arg = active_args[p_idx] if p_idx < len(active_args) else None
+            if arg:
+                is_ptr = arg.kind in ('input', 'output')
+            else:
+                is_ptr = ("ptr" in p_decl)
 
             if is_ptr:
                 c_type = "void*"
-            elif "64" in p_decl or ".u64" in p_decl or ".s64" in p_decl or ".ptr" in p_decl:
+            elif "64" in p_decl or ".u64" in p_decl or ".s64" in p_decl:
                 c_type = "int64_t"
             elif "f32" in p_decl:
                 c_type = "float"
@@ -223,14 +229,11 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
         arg_setup_lines.append("static thread_local std::vector<void*> kp;")
         arg_setup_lines.append("kp.clear();")
 
-        active_args = [arg for arg in manifest.arguments if not getattr(arg, 'is_constexpr', False)]
-        active_ptr_indices = [idx for idx, arg in enumerate(manifest.arguments) if not getattr(arg, 'is_constexpr', False) and arg.kind in ('input', 'output')]
-        active_args = [a for a in manifest.arguments if not getattr(a, 'is_constexpr', False)]
         for slot_idx, slot in enumerate(ptx_ordered_slots):
             c_type = slot["type"]
             arg = active_args[slot_idx] if slot_idx < len(active_args) else None
 
-            if slot["is_ptr"] or (arg and arg.kind in ('input', 'output')):
+            if slot["is_ptr"]:
                 if arg and arg.kind in ('input', 'output'):
                     orig_idx = manifest.arguments.index(arg)
                     arg_setup_lines.append(f"kp.push_back((void*)&arg_ptr_{orig_idx});")
@@ -273,7 +276,7 @@ void {kernel_name}::Compute(OrtKernelContext* context) {{
     if (mModule == nullptr) {{
         CUresult res = cuModuleLoadDataEx(&mModule, PTX_CODE, 0, nullptr, nullptr);
         if (res != CUDA_SUCCESS) throw std::runtime_error("Failed to load PTX module");
-        res = cuModuleGetFunction(&mKernel, mModule, "{manifest.kernel_name}");
+        res = cuModuleGetFunction(&mKernel, mModule, "{ptx_entry_name}");
         if (res != CUDA_SUCCESS) throw std::runtime_error("Failed to extract function");
         cuFuncSetAttribute(mKernel, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, {manifest.shared_memory_bytes});
     }}

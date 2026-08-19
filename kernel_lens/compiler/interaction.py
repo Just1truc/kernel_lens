@@ -32,7 +32,7 @@ class AutoInteractionHandler(InteractionHandler):
     
     def ask_tensor_kind(self, kernel_name: str, tensor_name: str, shape: tuple) -> str:
         name_lower = tensor_name.lower()
-        if any(kw in name_lower for kw in ['out', 'dst', 'res', 'result', 'c_ptr', 'z_ptr']) or name_lower in ['c', 'z']:
+        if any(kw in name_lower for kw in ['out', 'dst', 'res_out', 'result', 'c_ptr', 'z_ptr']) or name_lower in ['c', 'z']:
             print(f"[Auto-Resolve] '{tensor_name}' mapped to OUTPUT.")
             return 'output'
         elif 'in' in name_lower or name_lower in ['q', 'k', 'v', 'x', 'w', 'a', 'b', 'd', 'gamma', 'beta', 'cos', 'sin', 'scale'] or ('ptr' in name_lower and not any(kw in name_lower for kw in ['out', 'dst', 'c_ptr', 'z_ptr'])):

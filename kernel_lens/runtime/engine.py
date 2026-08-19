@@ -187,22 +187,17 @@ class CompiledModel:
             )
 
         # 3. OUTPUT ALLOCATION
-        if not hasattr(self, '_ort_output_tensors') or self._ort_output_tensors is None:
-            self._ort_output_tensors = []
-            for i, sess_out in enumerate(self._ort_session.get_outputs()):
-                if self.output_shapes and i < len(self.output_shapes):
-                    out_shape = self.output_shapes[i]
-                else:
-                    out_shape = tuple([d if (isinstance(d, int) and d > 0) else trt_inputs[0].shape[j] for j, d in enumerate(sess_out.shape)])
-                out_stride = self.output_strides[i] if (self.output_strides and i < len(self.output_strides)) else None
-                out_dtype = self.output_dtypes[i] if (self.output_dtypes and i < len(self.output_dtypes)) else torch.float32
-                if out_stride and len(out_stride) == len(out_shape):
-                    t = torch.empty_strided(out_shape, out_stride, device='cuda', dtype=out_dtype)
-                else:
-                    t = torch.zeros(out_shape, device='cuda', dtype=out_dtype)
-                self._ort_output_tensors.append(t)
+        ort_output_tensors = []
+        for i, sess_out in enumerate(self._ort_session.get_outputs()):
+            if self.output_shapes and i < len(self.output_shapes) and tuple(self.output_shapes[i]) == tuple(trt_inputs[0].shape):
+                out_shape = tuple(self.output_shapes[i])
+            else:
+                out_shape = tuple([d if (isinstance(d, int) and d > 0) else trt_inputs[0].shape[j] for j, d in enumerate(sess_out.shape)])
+            out_dtype = self.output_dtypes[i] if (self.output_dtypes and i < len(self.output_dtypes)) else torch.float32
+            t = torch.empty(out_shape, device='cuda', dtype=out_dtype)
+            ort_output_tensors.append(t)
 
-        for sess_out, t in zip(self._ort_session.get_outputs(), self._ort_output_tensors):
+        for sess_out, t in zip(self._ort_session.get_outputs(), ort_output_tensors):
             np_dtype = np.float32
             if t.dtype == torch.float64: np_dtype = np.float64
             elif t.dtype == torch.float16: np_dtype = np.float16
@@ -222,7 +217,7 @@ class CompiledModel:
         except Exception as e:
             raise RuntimeError(f"ORT Execution failed: {e}")
         
-        return self._ort_output_tensors[0] if len(self._ort_output_tensors) == 1 else tuple(self._ort_output_tensors)
+        return ort_output_tensors[0] if len(ort_output_tensors) == 1 else tuple(ort_output_tensors)
 
     def _run_trt(self, inputs: tuple):
         import ctypes
@@ -346,12 +341,8 @@ class CompiledModel:
             name = self._trt_engine.get_tensor_name(i)
             if self._trt_engine.get_tensor_mode(name) == trt.TensorIOMode.OUTPUT:
                 shape = tuple(self._trt_context.get_tensor_shape(name))
-                out_stride = self.output_strides[out_idx] if (self.output_strides and out_idx < len(self.output_strides)) else None
                 out_dtype = self.output_dtypes[out_idx] if (self.output_dtypes and out_idx < len(self.output_dtypes)) else torch.float32
-                if out_stride and len(out_stride) == len(shape):
-                    out_t = torch.empty_strided(shape, out_stride, device='cuda', dtype=out_dtype)
-                else:
-                    out_t = torch.empty(shape, device='cuda', dtype=out_dtype)
+                out_t = torch.empty(shape, device='cuda', dtype=out_dtype)
                 self._trt_context.set_tensor_address(name, out_t.data_ptr())
                 torch_outputs.append(out_t)
                 out_idx += 1

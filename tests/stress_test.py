@@ -6,11 +6,16 @@ import kernel_lens as kl
 from kernel_lens.compiler.interaction import AutoInteractionHandler
 import time
 
-def native_rms_norm(x, gamma, beta):
-    # PyTorch assemble souvent ça manuellement si ce n'est pas du LayerNorm standard
-    eps = 1e-6
-    var = x.pow(2).mean(-1, keepdim=True)
-    return (x * torch.rsqrt(var + eps)) * gamma + beta
+def native_rms_norm(x, gamma, beta, G=8, D=8, eps=1e-5):
+    shape = x.shape
+    C = shape[-1]
+    if G is None or D is None or G * D != C:
+        var = x.pow(2).mean(-1, keepdim=True)
+        return (x * torch.rsqrt(var + eps)) * gamma + beta
+    x_g = x.view(*shape[:-1], G, D)
+    var = x_g.pow(2).mean(-1, keepdim=True)
+    out_g = (x_g * torch.rsqrt(var + eps)) * gamma.view(G, D) + beta.view(G, D)
+    return out_g.view(*shape)
 
 def rotate_half(x):
     x1, x2 = x[..., :x.shape[-1] // 2], x[..., x.shape[-1] // 2:]
@@ -34,9 +39,11 @@ class NativeAttentionModule(torch.nn.Module):
         return attn @ v
 
 def native_squared_relu_attn(q, k, v, scale):
-    # Attention "Naive" (O(N^2) mémoire)
-    # C'est ici que PyTorch va exploser en temps/mémoire par rapport à ton Flash Attention
-    attn = (q @ k.transpose(-2, -1)) * scale
+    N_CTX = q.shape[-2]
+    m_idx = torch.arange(N_CTX, device=q.device)[:, None]
+    n_idx = torch.arange(N_CTX, device=q.device)[None, :]
+    dist = (m_idx - n_idx).abs().float()
+    attn = (q @ k.transpose(-2, -1)) * scale - dist
     attn = torch.relu(attn).pow(2)
     return attn @ v
 
@@ -338,19 +345,15 @@ def run_stress_test(model, inputs, name, native_fn=None, atol=1e-3):
         #                 for p, t in zip(pt_out, trt_outputs))
         # else:
         #     # Cas sortie unique (ex: RMS Norm, Attention)
-        #     trt_out_tensor = torch.as_tensor(trt_outputs[0], device='cuda')
-        #     is_stable = torch.allclose(pt_out, trt_out_tensor, atol=atol)
-        #     max_err = torch.abs(pt_out - trt_out_tensor).max().item()
-
-        # print(f"  -> Numerical Stability: {'✅ PASSED' if is_stable else '❌ FAILED'} (Max Err: {max_err:.6e})")
         # --- DUAL BACKEND STABILITY CHECK ---
         def check_stability(backend_name, outputs):
             is_stable = True
             max_err = 0.0
-            for p, t in zip(pt_out_list, outputs):
+            outputs_list = list(outputs) if isinstance(outputs, (tuple, list)) else [outputs]
+            for p, t in zip(pt_out_list, outputs_list):
                 t_tensor = torch.as_tensor(t, device='cuda')
-                print(f"[DEBUG STRESS {backend_name}] p[:5]: {p.flatten()[:5].tolist()}")
-                print(f"[DEBUG STRESS {backend_name}] t[:5]: {t_tensor.flatten()[:5].tolist()}")
+                if t_tensor.shape != p.shape:
+                    t_tensor = t_tensor.view_as(p)
                 diff = torch.abs(p - t_tensor)
                 curr_max = diff.max().item()
                 max_err = max(max_err, curr_max)
@@ -393,7 +396,7 @@ def run_robustness_suite():
     print("\n[Edge Case] Non-Power-of-Two Dimensions (D=63, G=7)")
     rms_npot = RMSGroupNormLayer(G=7, D=9).cuda() # Total 63
     x_npot = torch.randn(1, 4, 7, 63, device='cuda')
-    results.append(("NPOT_Shape", run_stress_test(rms_npot, (x_npot,), "RMS_NPOT")))
+    results.append(("NPOT_Shape", run_stress_test(rms_npot, (x_npot,), "RMS_NPOT", native_fn=lambda x: native_rms_norm(x, rms_npot.gamma, rms_npot.beta, G=7, D=9))))
 
     # --- CASE 2: High-Stride / Non-Contiguous (The "Pointer Killer") ---
     # Teste si ton code C++ respecte les strides ONNX ou s'il assume la contiguité
@@ -431,37 +434,33 @@ def run_robustness_suite():
         print("\n⚠️ ROBUSTNESS HOLES DETECTED. CHECK ALIGNMENT LOGIC.")
 
 if __name__ == "__main__":
-    # Tes tests standards ici...
-    # ...
-    # Lancement de la suite de torture
-    # run_robustness_suite()
-
-# if __name__ == "__main__":
     torch.manual_seed(42)
     
     # TEST 1: RMS Group Norm
     rms_model = RMSGroupNormLayer(G=8, D=8).cuda()
     rms_x = torch.randn(2, 8, 8, 64, device='cuda', dtype=torch.float32)
-    # On ne passe que rms_x, le module gère ses paramètres internes !
-    run_stress_test(rms_model, (rms_x,), "RMS_Group_Norm", native_fn=lambda x: native_rms_norm(x, 8, 8))
+    run_stress_test(rms_model, (rms_x,), "RMS_Group_Norm", native_fn=lambda x: native_rms_norm(x, rms_model.gamma, rms_model.beta))
     
     # TEST 2: RoPE (Multi Output)
-    # rope_model = RoPELayer().cuda()
-    # B, H, N, D = 2, 8, 128, 64
-    # rotary_dim = 32
-    # q = torch.randn(B, H, N, D, device='cuda', dtype=torch.float32)
-    # k = torch.randn(B, H, N, D, device='cuda', dtype=torch.float32)
-    # cos = torch.randn(N, rotary_dim, device='cuda', dtype=torch.float32)
-    # sin = torch.randn(N, rotary_dim, device='cuda', dtype=torch.float32)
-    # run_stress_test(rope_model, (q, k, cos, sin), "RoPE_Multi_Output", native_fn=native_rope)
+    rope_model = RoPELayer().cuda()
+    B, H, N, D = 2, 8, 128, 64
+    rotary_dim = 32
+    q = torch.randn(B, H, N, D, device='cuda', dtype=torch.float32)
+    k = torch.randn(B, H, N, D, device='cuda', dtype=torch.float32)
+    cos = torch.randn(N, rotary_dim, device='cuda', dtype=torch.float32)
+    sin = torch.randn(N, rotary_dim, device='cuda', dtype=torch.float32)
+    run_stress_test(rope_model, (q, k, cos, sin), "RoPE_Multi_Output", native_fn=native_rope)
 
     # TEST 3: Squared ReLU Attention (POUSSÉ À L = 4096 POUR LA DÉMO DU PAPIER)
-    # attn_model = SquaredReLUAttentionLayer().cuda()
-    # Z, H, N_CTX, D = 1, 8, 4096, 64  # <-- Saturation mémoire activée
-    # q_a = torch.randn(Z, H, N_CTX, D, device='cuda', dtype=torch.float32)
-    # k_a = torch.randn(Z, H, N_CTX, D, device='cuda', dtype=torch.float32)
-    # v_a = torch.randn(Z, H, N_CTX, D, device='cuda', dtype=torch.float32)
-    # scale = 1.0 / (D ** 0.5)
-    # run_stress_test(attn_model, (q_a, k_a, v_a, scale), "Squared_ReLU_Flash_Attention_4K", native_fn=native_squared_relu_attn)
+    attn_model = SquaredReLUAttentionLayer().cuda()
+    Z, H, N_CTX, D = 1, 8, 4096, 64  # <-- Saturation mémoire activée
+    q_a = torch.randn(Z, H, N_CTX, D, device='cuda', dtype=torch.float32)
+    k_a = torch.randn(Z, H, N_CTX, D, device='cuda', dtype=torch.float32)
+    v_a = torch.randn(Z, H, N_CTX, D, device='cuda', dtype=torch.float32)
+    scale = 1.0 / (D ** 0.5)
+    run_stress_test(attn_model, (q_a, k_a, v_a, scale), "Squared_ReLU_Flash_Attention_4K", native_fn=native_squared_relu_attn)
+
+    # Lancement de la suite de torture
+    run_robustness_suite()
 
     print("\n🚀 ALL MULTI-BACKEND STRESS TESTS COMPLETED.")

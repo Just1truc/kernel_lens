@@ -81,14 +81,14 @@ class TritonSymIntTracingContext:
             # --- PTX EXTRACTION ---
             caches = getattr(jit_self, 'cache', getattr(jit_self, 'device_caches', {}))
             constexpr_arg_indices = set()
-            for key_or_dev, value in caches.items():
+            for key_or_dev, value in reversed(list(caches.items())):
                 items_to_check = []
                 if isinstance(value, tuple) and len(value) > 0 and isinstance(value[0], dict):
                     items_to_check = list(value[0].items())
                 elif isinstance(value, dict):
                     items_to_check = list(value.items())
                     
-                for key_tuple, compiled in items_to_check:
+                for key_tuple, compiled in reversed(items_to_check):
                     if hasattr(compiled, 'asm') and 'ptx' in compiled.asm:
                         ptx = compiled.asm['ptx']
                         

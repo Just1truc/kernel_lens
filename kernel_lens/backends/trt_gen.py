@@ -154,6 +154,9 @@ private:
         grid_y_cxx = grid_strs[1]
         grid_z_cxx = grid_strs[2]
 
+        fn_match = re.search(r'\.entry\s+([a-zA-Z0-9_]+)', manifest.ptx)
+        ptx_entry_name = fn_match.group(1) if fn_match else manifest.kernel_name
+
         init_lines = [f"m_{arg.name}({arg.value})" for arg in scalars]
         init_str = (", " + ", ".join(init_lines)) if init_lines else ""
 
@@ -199,7 +202,12 @@ private:
             match = re.search(r'_param_(\d+)$', p_ident)
             if match:
                 p_ident = match.group(1)
-            is_ptr = ("ptr" in p_decl) or (s_idx < num_ptr_args)
+            arg = active_args[s_idx] if s_idx < len(active_args) else None
+            if arg:
+                is_ptr = arg.kind in ('input', 'output')
+            else:
+                is_ptr = ("ptr" in p_decl)
+
             if is_ptr: c_type = "void*"
             elif "32" in p_decl and "f" not in p_decl: c_type = "int32_t"
             elif "64" in p_decl and "f" not in p_decl: c_type = "int64_t"
@@ -211,16 +219,13 @@ private:
         num_ptx_slots = len(ptx_ordered_slots)
         in_counter = 0
         out_counter = 0
-        active_args = [a for a in manifest.arguments if not getattr(a, 'is_constexpr', False)]
-        in_counter = 0
-        out_counter = 0
         arg_setup_lines = []
 
         for slot_idx, slot in enumerate(ptx_ordered_slots):
             c_type = slot["type"]
             arg = active_args[slot_idx] if slot_idx < len(active_args) else None
 
-            if slot["is_ptr"] or (arg and arg.kind in ('input', 'output')):
+            if slot["is_ptr"]:
                 if arg and arg.kind == 'input':
                     arg_setup_lines.append(f"static thread_local const void* tmp_ptr_{slot_idx}; tmp_ptr_{slot_idx} = (const void*)inputs[{in_counter}];")
                     arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_ptr_{slot_idx};")
@@ -235,7 +240,7 @@ private:
             else:
                 if arg and arg.kind == 'scalar':
                     expr = getattr(arg, 'cxx_expr', '') or f"m_{arg.name}"
-                    scalar_ctype = "int64_t" if "64" in str(arg.dtype) else ("float" if "float" in str(arg.dtype) else "int32_t")
+                    scalar_ctype = "int64_t" if "64" in str(arg.dtype) else ("float" if ("float" in str(arg.dtype) or "float" in c_type or "double" in c_type) else "int32_t")
                     arg_setup_lines.append(f"static thread_local {scalar_ctype} tmp_scalar_{slot_idx}; tmp_scalar_{slot_idx} = ({scalar_ctype})({expr});")
                     arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_scalar_{slot_idx};")
                 else:
@@ -303,7 +308,7 @@ int {plugin_name}::initialize() noexcept {{
         CUresult res = cuModuleLoadDataEx(&mModule, PTX_CODE, 0, nullptr, nullptr);
         if (res != CUDA_SUCCESS) return -1;
         
-        res = cuModuleGetFunction(&mKernel, mModule, "{manifest.kernel_name}");
+        res = cuModuleGetFunction(&mKernel, mModule, "{ptx_entry_name}");
         if (res != CUDA_SUCCESS) return -1;
         cuFuncSetAttribute(mKernel, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, {manifest.shared_memory_bytes});
     }}

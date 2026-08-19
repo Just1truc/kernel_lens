@@ -1,4 +1,5 @@
 import os
+import re
 import torch
 import triton
 from torch.fx.experimental.proxy_tensor import make_fx
@@ -133,6 +134,11 @@ def compile(
     
     if not manifests:
         return CompiledModel(cache_dir, name, backends)
+
+    safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    for m in manifests:
+        if not m.kernel_name.endswith(f"_{safe_name}"):
+            m.kernel_name = f"{m.kernel_name}_{safe_name}"
 
     manifests = analyze_grid_asts(manifests, handler=interaction_handler)
 
