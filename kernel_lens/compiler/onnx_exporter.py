@@ -25,7 +25,9 @@ def get_onnx_node_class(kernel_name, manifest):
         def symbolic(g, *args):
             target_outs = args[:out_count]
             node_inputs = args[out_count:]
-            res = g.op(f"triton_custom::{kernel_name}", *node_inputs, outputs=out_count)
+            res = g.op(f"triton_custom::{kernel_name}", *node_inputs, outputs=out_count, plugin_version_s="1", plugin_namespace_s="triton_custom")
+
+
             if out_count > 1:
                 for i, r in enumerate(res):
                     r.setType(target_outs[i].type())
@@ -82,16 +84,17 @@ class TritonGlobalONNXExporter:
                     orig_getitem(jit_self, evaluated_grid)(*clean_args, **clean_kwargs)
                     
                     # 2. PREPARE ARGS FOR ONNX TRACING
-                    from ..config import is_verbose
+                    from ..config import is_verbose, debug_print
                     if is_verbose():
-                        print(f"[ONNX EXPORT DEBUG] manifest.arguments:")
+                        debug_print(f"[ONNX EXPORT DEBUG] manifest.arguments:")
                         for idx, a in enumerate(manifest.arguments):
-                            print(f"  arg {idx}: name='{a.name}', kind='{a.kind}', shape={a.shape}, dtype={a.dtype}")
+                            debug_print(f"  arg {idx}: name='{a.name}', kind='{a.kind}', shape={a.shape}, dtype={a.dtype}")
                     
                     node_inputs = []
                     for arg_def in manifest.arguments:
-                        if arg_def.kind == 'output':
+                        if arg_def.kind != 'input':
                             continue
+
                         val = bound.arguments[arg_def.name]
                         if isinstance(val, torch.SymInt):
                             val = unwrap(val)
@@ -114,14 +117,14 @@ class TritonGlobalONNXExporter:
                     ONNXNode = get_onnx_node_class(manifest.kernel_name, manifest)
                     res = ONNXNode.apply(*target_outs, *node_inputs)
                     if is_verbose():
-                        print(f"[ONNX EXPORT DEBUG] res shape: {res.shape if isinstance(res, torch.Tensor) else [r.shape for r in res]}")
+                        debug_print(f"[ONNX EXPORT DEBUG] res shape: {res.shape if isinstance(res, torch.Tensor) else [r.shape for r in res]}")
                     
                     # 4. WIRE THE GRAPH TOGETHER
                     out_idx = [i for i, a in enumerate(manifest.arguments) if a.kind == 'output']
                     if out_idx:
                         if len(out_idx) == 1:
                             target_out = bound.arguments[manifest.arguments[out_idx[0]].name]
-                            print(f"[ONNX EXPORT DEBUG] copying res (shape {res.shape}) to target_out (shape {target_out.shape})")
+                            debug_print(f"[ONNX EXPORT DEBUG] copying res (shape {res.shape}) to target_out (shape {target_out.shape})")
                             target_out.copy_(res)
                         else:
                             for i, idx in enumerate(out_idx):

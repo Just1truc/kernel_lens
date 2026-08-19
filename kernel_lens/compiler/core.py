@@ -18,6 +18,7 @@ from ..utils.env_check import check_environment
 
 # Builders
 from ..backends.builder import build_ort_plugin, build_trt_plugin
+from ..config import debug_print
 
 # Runtime
 from ..runtime.engine import CompiledModel
@@ -52,7 +53,7 @@ def is_nhwc(tensor_shape, tensor_strides):
     return tensor_strides[1] == 1
 
 def validate_manifests(manifests):
-    print("DEBUG: Validating manifests...")
+    debug_print("DEBUG: Validating manifests...")
     for m in manifests:
         for arg in m.arguments:
             if hasattr(arg, 'strides') and arg.strides and len(arg.shape) == 4:

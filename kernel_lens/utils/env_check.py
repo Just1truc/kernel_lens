@@ -27,7 +27,8 @@ def check_environment(backends: list[str]):
         
         import onnxruntime as ort
         if 'CUDAExecutionProvider' not in ort.get_available_providers():
-            print("⚠️ [Warning] ONNX Runtime is installed, but CUDAExecutionProvider is missing. Inference will fall back to CPU.")
+            from ..config import debug_print
+            debug_print("⚠️ [Warning] ONNX Runtime is installed, but CUDAExecutionProvider is missing. Inference will fall back to CPU.")
 
     # 3. TensorRT Checks
     if "tensorrt" in backends:
@@ -36,8 +37,9 @@ def check_environment(backends: list[str]):
                 "❌ 'tensorrt' Python bindings are not installed. \n"
                 "💡 Fix: Run `pip install kernel-lens[trt]` or `pip install tensorrt`"
             )
-            
+
         # Check if TRT C++ libraries are likely in the system path (simple heuristic)
         ld_lib_path = os.environ.get("LD_LIBRARY_PATH", "")
         if "tensorrt" not in ld_lib_path.lower() and not os.path.exists("/usr/lib/x86_64-linux-gnu/libnvinfer.so"):
-            print("⚠️ [Warning] libnvinfer.so not explicitly found in standard paths or LD_LIBRARY_PATH. The g++ linking phase may fail.")
+            from ..config import debug_print
+            debug_print("⚠️ [Warning] libnvinfer.so not explicitly found in standard paths or LD_LIBRARY_PATH. The g++ linking phase may fail.")

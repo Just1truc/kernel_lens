@@ -12,7 +12,7 @@ class ORTGenerator:
         op_name = f"{manifest.kernel_name}Op"
         kernel_name = f"{manifest.kernel_name}Kernel"
         
-        inputs_to_node = [a for a in manifest.arguments if a.kind != 'output']
+        inputs_to_node = [a for a in manifest.arguments if a.kind == 'input']
         outputs_from_node = [a for a in manifest.arguments if a.kind == 'output']
         
         input_types_cpp = []
@@ -37,15 +37,9 @@ class ORTGenerator:
             return "ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT"
 
         for a in inputs_to_node:
-            if a.kind == 'scalar':
-                mem_types_cpp.append("OrtMemTypeCPUInput")
-                if 'float' in str(a.dtype).lower():
-                    input_types_cpp.append("ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT")
-                else:
-                    input_types_cpp.append("ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64")
-            else:
-                mem_types_cpp.append("OrtMemTypeDefault")
-                input_types_cpp.append(torch_dtype_to_onnx_str(a.dtype))
+            mem_types_cpp.append("OrtMemTypeDefault")
+            input_types_cpp.append(torch_dtype_to_onnx_str(a.dtype))
+
 
         output_types_cpp = [torch_dtype_to_onnx_str(a.dtype) for a in outputs_from_node]
         if not output_types_cpp:
@@ -216,14 +210,9 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
                 arg_setup_lines.append(f"arg_ptr_{slot_idx} = (void*)out_tensor_{slot_idx}.GetTensorMutableData<float>();")
                 ort_output_counter += 1
             elif arg.kind == 'scalar':
-                arg_setup_lines.append(f"auto scalar_tensor_{slot_idx} = ctx.GetInput({onnx_input_counter});")
-                arg_setup_lines.append(f"double scalar_val_{slot_idx} = 0.0;")
-                arg_setup_lines.append(f"auto type_{slot_idx} = scalar_tensor_{slot_idx}.GetTensorTypeAndShapeInfo().GetElementType();")
-                arg_setup_lines.append(f"if (type_{slot_idx} == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) scalar_val_{slot_idx} = (double)(*scalar_tensor_{slot_idx}.GetTensorData<int64_t>());")
-                arg_setup_lines.append(f"else if (type_{slot_idx} == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) scalar_val_{slot_idx} = (double)(*scalar_tensor_{slot_idx}.GetTensorData<int32_t>());")
-                arg_setup_lines.append(f"else if (type_{slot_idx} == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) scalar_val_{slot_idx} = (double)(*scalar_tensor_{slot_idx}.GetTensorData<float>());")
-                arg_setup_lines.append(f"else if (type_{slot_idx} == ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE) scalar_val_{slot_idx} = *scalar_tensor_{slot_idx}.GetTensorData<double>();")
-                onnx_input_counter += 1
+                s_val = arg.value if getattr(arg, 'value', None) is not None else 0.0
+                arg_setup_lines.append(f"double scalar_val_{slot_idx} = {s_val};")
+
 
         arg_setup_lines.append("static thread_local const void* null_ptr_arg = nullptr;")
         arg_setup_lines.append("static thread_local std::vector<void*> kp;")

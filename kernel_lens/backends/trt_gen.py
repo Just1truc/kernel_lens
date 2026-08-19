@@ -48,8 +48,11 @@ class TensorRTPluginGenerator:
 #include <cuda.h>
 #include <string>
 #include <vector>
+#include <mutex>
 
-namespace {self.plugin_namespace} {{
+
+namespace {self.plugin_namespace}_{manifest.kernel_name} {{
+
 
 class {plugin_name} : public nvinfer1::IPluginV2DynamicExt {{
 public:
@@ -59,32 +62,40 @@ public:
     const char* getPluginType() const noexcept override;
     const char* getPluginVersion() const noexcept override;
     
-    int getNbOutputs() const noexcept override {{ 
+    int32_t getNbOutputs() const noexcept override {{ 
         return {len([a for a in manifest.arguments if a.kind == 'output'])}; 
     }}
     
-    nvinfer1::DimsExprs getOutputDimensions(int outputIndex, const nvinfer1::DimsExprs* inputs, int nbInputs, nvinfer1::IExprBuilder& exprBuilder) noexcept override {{
+    using nvinfer1::IPluginV2Ext::configurePlugin;
+
+    nvinfer1::DimsExprs getOutputDimensions(int32_t outputIndex, const nvinfer1::DimsExprs* inputs, int32_t nbInputs, nvinfer1::IExprBuilder& exprBuilder) noexcept override {{
         {get_out_dims_cxx}
         return inputs[0]; 
     }}
+
+
     
-    int enqueue(const nvinfer1::PluginTensorDesc* inputDesc, const nvinfer1::PluginTensorDesc* outputDesc, const void* const* inputs, void* const* outputs, void* workspace, cudaStream_t stream) noexcept override;
+    int32_t enqueue(const nvinfer1::PluginTensorDesc* inputDesc, const nvinfer1::PluginTensorDesc* outputDesc, const void* const* inputs, void* const* outputs, void* workspace, cudaStream_t stream) noexcept override;
     size_t getSerializationSize() const noexcept override;
     void serialize(void* buffer) const noexcept override;
     nvinfer1::IPluginV2DynamicExt* clone() const noexcept override;
     
-    bool supportsFormatCombination(int pos, const nvinfer1::PluginTensorDesc* inOut, int nbInputs, int nbOutputs) noexcept {{ 
+    bool supportsFormatCombination(int32_t pos, const nvinfer1::PluginTensorDesc* inOut, int32_t nbInputs, int32_t nbOutputs) noexcept override {{ 
         {supports_format_cxx}
     }}
     
-    void configurePlugin(const nvinfer1::DynamicPluginTensorDesc* in, int nbInputs, const nvinfer1::DynamicPluginTensorDesc* out, int nbOutputs) noexcept override;
-    size_t getWorkspaceSize(const nvinfer1::PluginTensorDesc* inputs, int nbInputs, const nvinfer1::PluginTensorDesc* outputs, int nbOutputs) const noexcept override;
-    nvinfer1::DataType getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const noexcept override;
-    int initialize() noexcept override;
+    void configurePlugin(const nvinfer1::DynamicPluginTensorDesc* in, int32_t nbInputs, const nvinfer1::DynamicPluginTensorDesc* out, int32_t nbOutputs) noexcept override {{}}
+    size_t getWorkspaceSize(const nvinfer1::PluginTensorDesc* inputs, int32_t nbInputs, const nvinfer1::PluginTensorDesc* outputs, int32_t nbOutputs) const noexcept override {{ return 0; }}
+    nvinfer1::DataType getOutputDataType(int32_t index, const nvinfer1::DataType* inputTypes, int32_t nbInputs) const noexcept override;
+
+    int32_t initialize() noexcept override;
     void terminate() noexcept override;
-    void destroy() noexcept override;
-    void setPluginNamespace(const char* pluginNamespace) noexcept override;
-    const char* getPluginNamespace() const noexcept override;
+    void destroy() noexcept override {{ delete this; }}
+    void setPluginNamespace(const char* pluginNamespace) noexcept override {{ mNamespace = pluginNamespace; }}
+    const char* getPluginNamespace() const noexcept override {{ return mNamespace.c_str(); }}
+
+
+
     
 private:
     std::string mNamespace;
@@ -114,7 +125,8 @@ private:
     std::vector<nvinfer1::PluginField> mPluginAttributes;
 }};
 
-}} // namespace {self.plugin_namespace}
+}} // namespace {self.plugin_namespace}_{manifest.kernel_name}
+
 
 #endif
 '''
@@ -278,12 +290,13 @@ private:
 #include <cstring>
 #include <iostream>
 
-namespace {self.plugin_namespace} {{
+namespace {self.plugin_namespace}_{manifest.kernel_name} {{
+
 
 const char* {plugin_name}::PTX_CODE = {ptx_encoded};
 
 {plugin_name}::{plugin_name}() : mNbOutputs({len([a for a in manifest.arguments if a.kind == 'output'])}){init_str} {{
-    mNamespace = "";
+    mNamespace = "{self.plugin_namespace}";
 }}
 
 {plugin_name}::{plugin_name}(const void* data, size_t length) {{
@@ -303,8 +316,9 @@ const char* {plugin_name}::PTX_CODE = {ptx_encoded};
 const char* {plugin_name}::getPluginType() const noexcept {{ return "{manifest.kernel_name}"; }}
 const char* {plugin_name}::getPluginVersion() const noexcept {{ return "{self.plugin_version}"; }}
 
-int {plugin_name}::initialize() noexcept {{
+int32_t {plugin_name}::initialize() noexcept {{
     if (mModule == nullptr) {{
+        cuInit(0);
         CUresult res = cuModuleLoadDataEx(&mModule, PTX_CODE, 0, nullptr, nullptr);
         if (res != CUDA_SUCCESS) return -1;
         
@@ -315,14 +329,15 @@ int {plugin_name}::initialize() noexcept {{
     return 0;
 }}
 
+
 void {plugin_name}::terminate() noexcept {{
-    if (mModule) {{
-        cuModuleUnload(mModule);
-        mModule = nullptr;
-    }}
+    mModule = nullptr;
+    mKernel = nullptr;
 }}
 
-int {plugin_name}::enqueue(const nvinfer1::PluginTensorDesc* inputDesc, const nvinfer1::PluginTensorDesc* outputDesc, const void* const* inputs, void* const* outputs, void* workspace, cudaStream_t stream) noexcept {{
+
+int32_t {plugin_name}::enqueue(const nvinfer1::PluginTensorDesc* inputDesc, const nvinfer1::PluginTensorDesc* outputDesc, const void* const* inputs, void* const* outputs, void* workspace, cudaStream_t stream) noexcept {{
+
     if (!mKernel) this->initialize();
 
     unsigned int grid_x = std::max(1u, (unsigned int)({grid_x_cxx}));
@@ -368,32 +383,29 @@ nvinfer1::IPluginV2DynamicExt* {plugin_name}::clone() const noexcept {{
     return plugin;
 }}
 
-void {plugin_name}::configurePlugin(const nvinfer1::DynamicPluginTensorDesc* in, int nbInputs, const nvinfer1::DynamicPluginTensorDesc* out, int nbOutputs) noexcept {{}}
-size_t {plugin_name}::getWorkspaceSize(const nvinfer1::PluginTensorDesc* inputs, int nbInputs, const nvinfer1::PluginTensorDesc* outputs, int nbOutputs) const noexcept {{ return 0; }}
+nvinfer1::DataType {plugin_name}::getOutputDataType(int32_t index, const nvinfer1::DataType* inputTypes, int32_t nbInputs) const noexcept {{
 
-//nvinfer1::DataType {plugin_name}::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const noexcept {{ 
-//    return inputTypes[0]; 
-//}}
-
-nvinfer1::DataType {plugin_name}::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const noexcept {{ 
     {dynamic_output_types}
-    return inputTypes[0]; // Ultimate fallback
+    return inputTypes[0];
 }}
 
-void {plugin_name}::destroy() noexcept {{ delete this; }}
-void {plugin_name}::setPluginNamespace(const char* pluginNamespace) noexcept {{ mNamespace = pluginNamespace; }}
-const char* {plugin_name}::getPluginNamespace() const noexcept {{ return mNamespace.c_str(); }}
-
 // Plugin creator methods
+
+
+
+
 const char* {plugin_name}Creator::getPluginName() const noexcept {{ return "{manifest.kernel_name}"; }}
 const char* {plugin_name}Creator::getPluginVersion() const noexcept {{ return "{self.plugin_version}"; }}
 
 {plugin_name}Creator::{plugin_name}Creator() {{
     mPluginAttributes.clear();
-    mFC.nbFields = mPluginAttributes.size();
-    mFC.fields = mPluginAttributes.data();
-    mNamespace = "";
+    mFC.nbFields = 0;
+    mFC.fields = nullptr;
+    mNamespace = "{self.plugin_namespace}";
 }}
+
+
+
 
 const nvinfer1::PluginFieldCollection* {plugin_name}Creator::getFieldNames() noexcept {{ return &mFC; }}
 
@@ -412,9 +424,77 @@ nvinfer1::IPluginV2* {plugin_name}Creator::deserializePlugin(const char* name, c
 void {plugin_name}Creator::setPluginNamespace(const char* pluginNamespace) noexcept {{ mNamespace = pluginNamespace; }}
 const char* {plugin_name}Creator::getPluginNamespace() const noexcept {{ return mNamespace.c_str(); }}
 
-REGISTER_TENSORRT_PLUGIN({plugin_name}Creator);
 
-}} // namespace {self.plugin_namespace}
+}} // namespace {self.plugin_namespace}_{manifest.kernel_name}
+
+extern "C" {{
+    __attribute__((visibility("default"))) nvinfer1::IPluginCreator* const* getPluginCreators(int32_t& nbCreators) {{
+        static auto* creator = new {self.plugin_namespace}_{manifest.kernel_name}::{plugin_name}Creator();
+        static nvinfer1::IPluginCreator* const creators[] = {{ creator }};
+        nbCreators = 1;
+        return creators;
+    }}
+
+    __attribute__((visibility("default"))) bool register_triton_plugins_explicit() {{
+        static bool g_registered = false;
+        if (g_registered) return true;
+        auto* registry = ::getPluginRegistry();
+        if (registry != nullptr) {{
+            auto* creator = new {self.plugin_namespace}_{manifest.kernel_name}::{plugin_name}Creator();
+            creator->setPluginNamespace("triton_custom");
+            registry->registerCreator(*creator, "triton_custom");
+            g_registered = true;
+            return true;
+        }}
+        return false;
+    }}
+
+
+
+
+    __attribute__((visibility("default"))) bool initLibNvInferPlugins(void* logger, const char* libNamespace) {{
+        return register_triton_plugins_explicit();
+    }}
+}}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 '''

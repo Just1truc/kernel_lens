@@ -1,6 +1,7 @@
 import re
 import torch
 from typing import List, Optional, Dict, Any
+from ..config import debug_print
 
 # REMOVED the circular import: from .manifest import KernelManifest
 # REMOVED the circular import: from .interaction import InteractionHandler
@@ -33,7 +34,7 @@ def analyze_grid_asts(
     Analyzes symbolic ASTs and classifies tensor arguments deterministically via tl.store inspection.
     """
     for manifest in manifests:
-        print(f"\n{'='*50}\nConfiguring I/O for: {manifest.kernel_name}\n{'='*50}")
+        debug_print(f"\n{'='*50}\nConfiguring I/O for: {manifest.kernel_name}\n{'='*50}")
         
         output_arg_names = set()
         if hasattr(manifest, 'fn') and manifest.fn is not None:
@@ -59,7 +60,7 @@ def analyze_grid_asts(
             if arg.shape:
                 if arg.name in output_arg_names:
                     arg.kind = 'output'
-                    print(f"[AST-Analysis] '{arg.name}' statically resolved to OUTPUT via tl.store analysis.")
+                    debug_print(f"[AST-Analysis] '{arg.name}' statically resolved to OUTPUT via tl.store analysis.")
                 elif handler is not None:
                     arg.kind = handler.ask_tensor_kind(manifest.kernel_name, arg.name, arg.shape)
                 else:
@@ -68,6 +69,6 @@ def analyze_grid_asts(
                     arg.kind = h.ask_tensor_kind(manifest.kernel_name, arg.name, arg.shape)
             else:
                 arg.kind = 'scalar'
-                print(f"[Auto] Mapped scalar constant: {arg.name} = {arg.value}")
+                debug_print(f"[Auto] Mapped scalar constant: {arg.name} = {arg.value}")
                 
     return manifests

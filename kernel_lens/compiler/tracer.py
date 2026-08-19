@@ -137,9 +137,9 @@ class TritonSymIntTracingContext:
                         mangled_name = get_meta('name', mangled_name)
                         num_warps = get_meta('num_warps', kwargs.get('num_warps', 4)) or 4
                         shared_memory_bytes = get_meta('shared', 0)
-                        from ..config import is_verbose
+                        from ..config import is_verbose, debug_print
                         if is_verbose():
-                            print(f"[TRACER DEBUG] Captured shared_memory_bytes: {shared_memory_bytes}, num_warps: {num_warps}, constexpr_indices: {constexpr_arg_indices}")
+                            debug_print(f"[TRACER DEBUG] Captured shared_memory_bytes: {shared_memory_bytes}, num_warps: {num_warps}, constexpr_indices: {constexpr_arg_indices}")
                         
                         if ptx and num_warps == 4:
                             match = re.search(r'\.reqntid\s+(\d+)', ptx)
@@ -213,19 +213,36 @@ def extract_manifests(module: torch.nn.Module, dummy_inputs: Tuple[Any, ...]) ->
             pass
     pass2_manifests = list(_CAPTURED_MANIFESTS)
     
-    print(f"\n[MERGE DEBUG] Pass 1 Kernels: {len(pass1_manifests)} | Pass 2 Kernels: {len(pass2_manifests)}")
+    from ..config import debug_print
+    debug_print(f"\n[MANIFEST DEBUG] Pass 1 (Concrete Execution) Captured {len(pass1_manifests)} Manifest(s):")
+    for i, m in enumerate(pass1_manifests):
+        debug_print(f"  --- Pass 1 Manifest [{i}]: {m.kernel_name} ---")
+        debug_print(f"      Shared Memory: {m.shared_memory_bytes} B | Warps: {m.num_warps} | Grid ASTs: {m._sym_grid_asts}")
+        debug_print(f"      Arguments ({len(m.arguments)}):")
+        for arg in m.arguments:
+            debug_print(f"        • '{arg.name}': shape={arg.shape}, strides={arg.strides}, dtype={arg.dtype}, value={arg.value}, constexpr={arg.is_constexpr}, sym_ast={arg._sym_ast}")
+
+    debug_print(f"\n[MANIFEST DEBUG] Pass 2 (Symbolic Fake Execution) Captured {len(pass2_manifests)} Manifest(s):")
+    for i, m in enumerate(pass2_manifests):
+        debug_print(f"  --- Pass 2 Manifest [{i}]: {m.kernel_name} ---")
+        debug_print(f"      Shared Memory: {m.shared_memory_bytes} B | Warps: {m.num_warps} | Grid ASTs: {m._sym_grid_asts}")
+        debug_print(f"      Arguments ({len(m.arguments)}):")
+        for arg in m.arguments:
+            debug_print(f"        • '{arg.name}': shape={arg.shape}, strides={arg.strides}, dtype={arg.dtype}, value={arg.value}, constexpr={arg.is_constexpr}, sym_ast={arg._sym_ast}")
+
+    debug_print(f"\n[MERGE DEBUG] Merging Pass 1 (Concrete Shapes/PTX) + Pass 2 (Symbolic Grid ASTs)...")
     
     merged = []
     for i, (m1, m2) in enumerate(zip(pass1_manifests, pass2_manifests)):
-        print(f"  -> Kernel {i} [{m1.kernel_name}]:")
+        debug_print(f"  -> Merging Kernel {i} [{m1.kernel_name}]:")
         m1._sym_grid_asts = m2._sym_grid_asts
         
         for a1, a2 in zip(m1.arguments, m2.arguments):
             # LOG THE CONFLICT
             if a1.shape != a2.shape:
-                print(f"     ⚠️ SHAPE MISMATCH for '{a1.name}':")
-                print(f"        Pass 1 (Real): {a1.shape}")
-                print(f"        Pass 2 (Fake): {a2.shape} <--- THIS IS THE CULPRIT")
+                debug_print(f"     ⚠️ SHAPE MISMATCH for '{a1.name}':")
+                debug_print(f"        Pass 1 (Real): {a1.shape}")
+                debug_print(f"        Pass 2 (Fake): {a2.shape} <--- THIS IS THE CULPRIT")
             
             # THE FIX: We keep Pass 1's shape but take Pass 2's AST logic
             a1._sym_ast = a2._sym_ast

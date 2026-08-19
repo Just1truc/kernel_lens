@@ -177,7 +177,8 @@ def squared_relu_kernel(
         k = tl.load(k_ptrs, mask=offs_n[None, :] < N_CTX, other=0.0)
         
         qk = tl.dot(q, k)
-        qk *= scale
+        qk = qk * tl.cast(scale, tl.float32)
+
         
         dist = tl.abs(offs_m[:, None] - offs_n[None, :])
         qk = qk - dist.to(tl.float32)

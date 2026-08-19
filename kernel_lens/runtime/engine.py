@@ -136,11 +136,11 @@ class CompiledModel:
         io_binding = self._ort_session.io_binding()
 
         session_inputs = self._ort_session.get_inputs()
-        from ..config import is_verbose
+        from ..config import is_verbose, debug_print
         if is_verbose():
-            print(f"[ENGINE DEBUG] session_inputs count: {len(session_inputs)}")
+            debug_print(f"[ENGINE DEBUG] session_inputs count: {len(session_inputs)}")
             for idx, s in enumerate(session_inputs):
-                print(f"  sess_in {idx}: name='{s.name}', type='{s.type}', shape={s.shape}")
+                debug_print(f"  sess_in {idx}: name='{s.name}', type='{s.type}', shape={s.shape}")
         
         trt_inputs = []
         for i, sess_in in enumerate(session_inputs):
@@ -233,13 +233,17 @@ class CompiledModel:
             onnx_path = os.path.join(self.cache_dir, f"{self.model_name}.onnx")
             engine_path = os.path.join(self.cache_dir, f"{self.model_name}.engine")
             
-            ctypes.CDLL(so_path, mode=ctypes.RTLD_GLOBAL)
+            dll = ctypes.CDLL(so_path, mode=ctypes.RTLD_GLOBAL)
+            if hasattr(dll, "register_triton_plugins_explicit"):
+                dll.register_triton_plugins_explicit.restype = ctypes.c_bool
+                dll.register_triton_plugins_explicit()
             TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
             trt.init_libnvinfer_plugins(TRT_LOGGER, "")
             
             # --- CONSTRUCTION DU MOTEUR (S'il n'existe pas) ---
             if not os.path.exists(engine_path):
-                print("     [Engine] Building TensorRT Engine... (This takes a moment)")
+                from ..config import debug_print
+                debug_print("     [Engine] Building TensorRT Engine... (This takes a moment)")
                 builder = trt.Builder(TRT_LOGGER)
                 if hasattr(trt.NetworkDefinitionCreationFlag, "EXPLICIT_BATCH"):
                     network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))

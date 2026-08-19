@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, List, Tuple
 import torch
 from .ast_analyzer import translate_symint_to_cxx
+from ..config import debug_print
 
 @dataclass
 class ArgumentDef:
@@ -32,7 +33,7 @@ class KernelManifest:
     
     def confirm_and_compile(self):
         """Asks the user for missing I/O context, then evaluates C++ bindings."""
-        print(f"\n{'='*50}\nConfiguring: {self.kernel_name}\n{'='*50}")
+        debug_print(f"\n{'='*50}\nConfiguring: {self.kernel_name}\n{'='*50}")
         
         for arg in self.arguments:
             if arg.shape:
@@ -43,9 +44,9 @@ class KernelManifest:
                         break
                     print("Invalid choice. Please type 'i' or 'o'.")
             else:
-                print(f"[Auto] Mapped scalar constant: {arg.name} = {arg.value}")
+                debug_print(f"[Auto] Mapped scalar constant: {arg.name} = {arg.value}")
                 
-        print(f"\n[+] Compiling SymInt ASTs into C++ bindings...")
+        debug_print(f"\n[+] Compiling SymInt ASTs into C++ bindings...")
         self._transpile_symints_to_cxx()
 
     def _transpile_symints_to_cxx(self):
