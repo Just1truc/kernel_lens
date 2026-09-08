@@ -233,22 +233,24 @@ def extract_manifests(module: torch.nn.Module, dummy_inputs: Tuple[Any, ...]) ->
     debug_print(f"\n[MERGE DEBUG] Merging Pass 1 (Concrete Shapes/PTX) + Pass 2 (Symbolic Grid ASTs)...")
     
     merged = []
-    for i, (m1, m2) in enumerate(zip(pass1_manifests, pass2_manifests)):
-        debug_print(f"  -> Merging Kernel {i} [{m1.kernel_name}]:")
-        m1._sym_grid_asts = m2._sym_grid_asts
-        
-        for a1, a2 in zip(m1.arguments, m2.arguments):
-            # LOG THE CONFLICT
-            if a1.shape != a2.shape:
-                debug_print(f"     ⚠️ SHAPE MISMATCH for '{a1.name}':")
-                debug_print(f"        Pass 1 (Real): {a1.shape}")
-                debug_print(f"        Pass 2 (Fake): {a2.shape} <--- THIS IS THE CULPRIT")
+    if not pass2_manifests or len(pass2_manifests) != len(pass1_manifests):
+        debug_print("  ⚠️ Pass 2 (Symbolic FX Tracing) failed or produced mismatched manifests. Falling back to Pass 1 concrete manifests.")
+        for m1 in pass1_manifests:
+            merged.append(m1)
+    else:
+        for i, (m1, m2) in enumerate(zip(pass1_manifests, pass2_manifests)):
+            debug_print(f"  -> Merging Kernel {i} [{m1.kernel_name}]:")
+            m1._sym_grid_asts = m2._sym_grid_asts
             
-            # THE FIX: We keep Pass 1's shape but take Pass 2's AST logic
-            a1._sym_ast = a2._sym_ast
-            # a1.shape remains what it was in Pass 1
-            
-        merged.append(m1)
+            for a1, a2 in zip(m1.arguments, m2.arguments):
+                if a1.shape != a2.shape:
+                    debug_print(f"     ⚠️ SHAPE MISMATCH for '{a1.name}':")
+                    debug_print(f"        Pass 1 (Real): {a1.shape}")
+                    debug_print(f"        Pass 2 (Fake): {a2.shape} <--- THIS IS THE CULPRIT")
+                
+                a1._sym_ast = a2._sym_ast
+                
+            merged.append(m1)
         
     _CAPTURED_MANIFESTS.clear()
     return merged

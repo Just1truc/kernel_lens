@@ -12,21 +12,25 @@ class ORTGenerator:
         op_name = f"{manifest.kernel_name}Op"
         kernel_name = f"{manifest.kernel_name}Kernel"
         
-        inputs_to_node = [a for a in manifest.arguments if a.kind == 'input']
-        outputs_from_node = [a for a in manifest.arguments if a.kind == 'output']
+        inputs_to_node = [a for a in manifest.arguments if (a.kind in ('input', 'inplace') or (a.kind == 'scalar' and not getattr(a, 'is_constexpr', False)))]
+        outputs_from_node = [a for a in manifest.arguments if a.kind in ('output', 'inplace')]
         
         input_types_cpp = []
         mem_types_cpp = []
         
         def torch_dtype_to_onnx_str(dtype_val) -> str:
             dtype_str = str(dtype_val).lower()
-            if 'int8' in dtype_str:
+            if 'bool' in dtype_str:
+                return "ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL"
+            elif 'uint8' in dtype_str:
+                return "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8"
+            elif 'int8' in dtype_str:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8"
             elif 'int16' in dtype_str:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16"
             elif 'int32' in dtype_str:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32"
-            elif 'int64' in dtype_str:
+            elif 'int64' in dtype_str or 'int' in dtype_str or 'long' in dtype_str:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64"
             elif 'float16' in dtype_str or 'fp16' in dtype_str or 'half' in dtype_str:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16"
@@ -37,9 +41,11 @@ class ORTGenerator:
             return "ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT"
 
         for a in inputs_to_node:
-            mem_types_cpp.append("OrtMemTypeDefault")
+            if a.kind == 'scalar':
+                mem_types_cpp.append("OrtMemTypeCPUInput")
+            else:
+                mem_types_cpp.append("OrtMemTypeDefault")
             input_types_cpp.append(torch_dtype_to_onnx_str(a.dtype))
-
 
         output_types_cpp = [torch_dtype_to_onnx_str(a.dtype) for a in outputs_from_node]
         if not output_types_cpp:
@@ -120,21 +126,17 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
         fn_match = re.search(r'\.entry\s+([a-zA-Z0-9_]+)', manifest.ptx)
         ptx_entry_name = fn_match.group(1) if fn_match else manifest.kernel_name
         
-        # --- ROBUST GRID EVALUATION ---
+        # --- ROBUST GRID EVALUATION WITH GENERIC REGEX SUBSTITUTION ---
         grid_strs = []
         if hasattr(manifest, '_sym_grid_asts') and manifest._sym_grid_asts:
             for g in manifest._sym_grid_asts:
-                # Always extract pure SymPy string FIRST
                 expr = str(g.node.expr) if hasattr(g, 'node') else str(g)
                 expr = re.sub(r'([a-zA-Z0-9_]+)\*\*([a-zA-Z0-9_]+)', r'std::pow(\1, \2)', expr)
                 expr = expr.replace("//", "/")
                 expr = re.sub(r'floor\((.*?)\)', r'(\1)', expr)
                 
-                # Replace SymPy symbols with ORT C++
-                # Use regex to avoid replacing s0 inside s01
-                expr = re.sub(r'\bs0\b', "(int64_t)dim_values[0]", expr)
-                expr = re.sub(r'\bs1\b', "(int64_t)(dim_values.size() > 1 ? dim_values[1] : 1)", expr)
-                expr = re.sub(r'\bs2\b', "(int64_t)(dim_values.size() > 2 ? dim_values[2] : 1)", expr)
+                # Replace any s(\d+) symbol dynamically using regex
+                expr = re.sub(r'\bs(\d+)\b', r"(int64_t)(dim_values.size() > \1 ? dim_values[\1] : 1)", expr)
                 grid_strs.append(expr)
                 
         while len(grid_strs) < 3:
@@ -159,15 +161,15 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
                 p_ident = parts[-1]
                 p_decl = " ".join(parts[:-1])
                 ptx_params.append((p_decl, p_ident))
-        num_ptr_args = len([a for a in manifest.arguments if not getattr(a, 'is_constexpr', False) and a.kind in ('input', 'output')])
+
         active_args = [a for a in manifest.arguments if not getattr(a, 'is_constexpr', False)]
         ptx_ordered_slots = []
         for p_idx, (p_decl, p_ident) in enumerate(ptx_params):
             match = re.search(r'_param_(\d+)$', p_ident)
             param_num = int(match.group(1)) if match else p_idx
-            arg = active_args[p_idx] if p_idx < len(active_args) else None
+            arg = active_args[param_num] if param_num < len(active_args) else (active_args[p_idx] if p_idx < len(active_args) else None)
             if arg:
-                is_ptr = arg.kind in ('input', 'output')
+                is_ptr = arg.kind in ('input', 'output', 'inplace')
             else:
                 is_ptr = ("ptr" in p_decl)
 
@@ -182,7 +184,7 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
             else:
                 c_type = "int32_t"
             
-            ptx_ordered_slots.append({"type": c_type, "ident": str(param_num), "is_ptr": is_ptr, "decl": p_decl})
+            ptx_ordered_slots.append({"type": c_type, "ident": str(param_num), "is_ptr": is_ptr, "decl": p_decl, "param_num": param_num})
 
         arg_setup_lines.append("// Extract inputs/outputs/scalars from ORT context")
         onnx_input_counter = 0
@@ -209,10 +211,38 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
                 arg_setup_lines.append(f"static thread_local void* arg_ptr_{slot_idx};")
                 arg_setup_lines.append(f"arg_ptr_{slot_idx} = (void*)out_tensor_{slot_idx}.GetTensorMutableData<float>();")
                 ort_output_counter += 1
+            elif arg.kind == 'inplace':
+                out_dim_exprs = []
+                for dim_idx, d in enumerate(arg.shape):
+                    try:
+                        d_int = int(d)
+                        out_dim_exprs.append(str(d_int))
+                    except Exception:
+                        out_dim_exprs.append(f"(int64_t)(dim_values.size() > {dim_idx} ? dim_values[{dim_idx}] : 1)")
+                out_shape_str = "{" + ", ".join(out_dim_exprs) + "}" if out_dim_exprs else "dim_values"
+                
+                arg_setup_lines.append(f"auto in_tensor_{slot_idx} = ctx.GetInput({onnx_input_counter});")
+                arg_setup_lines.append(f"std::vector<int64_t> out_dims_{ort_output_counter} = {out_shape_str};")
+                arg_setup_lines.append(f"auto out_tensor_{slot_idx} = ctx.GetOutput({ort_output_counter}, out_dims_{ort_output_counter}.data(), out_dims_{ort_output_counter}.size());")
+                arg_setup_lines.append(f"const void* in_ptr_{slot_idx} = (const void*)in_tensor_{slot_idx}.GetTensorData<float>();")
+                arg_setup_lines.append(f"void* out_ptr_{slot_idx} = (void*)out_tensor_{slot_idx}.GetTensorMutableData<float>();")
+                arg_setup_lines.append(f"size_t num_bytes_{slot_idx} = in_tensor_{slot_idx}.GetTensorTypeAndShapeInfo().GetElementCount() * sizeof(float);")
+                arg_setup_lines.append(f"if (in_ptr_{slot_idx} != out_ptr_{slot_idx}) {{ cudaMemcpyAsync(out_ptr_{slot_idx}, in_ptr_{slot_idx}, num_bytes_{slot_idx}, cudaMemcpyDeviceToDevice, (cudaStream_t)ctx.GetGPUComputeStream()); }}")
+                arg_setup_lines.append(f"static thread_local void* arg_ptr_{slot_idx};")
+                arg_setup_lines.append(f"arg_ptr_{slot_idx} = out_ptr_{slot_idx};")
+                onnx_input_counter += 1
+                ort_output_counter += 1
             elif arg.kind == 'scalar':
-                s_val = arg.value if getattr(arg, 'value', None) is not None else 0.0
-                arg_setup_lines.append(f"double scalar_val_{slot_idx} = {s_val};")
-
+                if not getattr(arg, 'is_constexpr', False):
+                    arg_setup_lines.append(f"auto scalar_tensor_{slot_idx} = ctx.GetInput({onnx_input_counter});")
+                    arg_setup_lines.append(f"double scalar_val_{slot_idx} = 0;")
+                    arg_setup_lines.append(f"if (scalar_tensor_{slot_idx}.GetTensorTypeAndShapeInfo().GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {{ scalar_val_{slot_idx} = (double)(scalar_tensor_{slot_idx}.GetTensorData<int64_t>()[0]); }}")
+                    arg_setup_lines.append(f"else if (scalar_tensor_{slot_idx}.GetTensorTypeAndShapeInfo().GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {{ scalar_val_{slot_idx} = (double)(scalar_tensor_{slot_idx}.GetTensorData<int32_t>()[0]); }}")
+                    arg_setup_lines.append(f"else {{ scalar_val_{slot_idx} = (double)(scalar_tensor_{slot_idx}.GetTensorData<float>()[0]); }}")
+                    onnx_input_counter += 1
+                else:
+                    s_val = arg.value if getattr(arg, 'value', None) is not None else 0.0
+                    arg_setup_lines.append(f"double scalar_val_{slot_idx} = {s_val};")
 
         arg_setup_lines.append("static thread_local const void* null_ptr_arg = nullptr;")
         arg_setup_lines.append("static thread_local std::vector<void*> kp;")
@@ -220,14 +250,15 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
 
         for slot_idx, slot in enumerate(ptx_ordered_slots):
             c_type = slot["type"]
-            arg = active_args[slot_idx] if slot_idx < len(active_args) else None
+            param_num = slot["param_num"]
+            arg = active_args[param_num] if param_num < len(active_args) else (active_args[slot_idx] if slot_idx < len(active_args) else None)
 
-            if slot["is_ptr"]:
-                if arg and arg.kind in ('input', 'output'):
-                    orig_idx = manifest.arguments.index(arg)
-                    arg_setup_lines.append(f"kp.push_back((void*)&arg_ptr_{orig_idx});")
-                else:
-                    arg_setup_lines.append(f"kp.push_back((void*)&null_ptr_arg);")
+            if slot["is_ptr"] and arg and arg.kind in ('input', 'output', 'inplace'):
+                orig_idx = manifest.arguments.index(arg)
+                arg_setup_lines.append(f"kp.push_back((void*)&arg_ptr_{orig_idx});")
+            elif slot["is_ptr"] and (not arg or arg.kind not in ('input', 'output', 'inplace')):
+                arg_setup_lines.append(f"static thread_local int64_t dummy_stride_{slot_idx} = 1;")
+                arg_setup_lines.append(f"kp.push_back((void*)&dummy_stride_{slot_idx});")
             else:
                 if arg and arg.kind == 'scalar':
                     orig_idx = manifest.arguments.index(arg)
@@ -235,7 +266,7 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
                     arg_setup_lines.append(f"ptx_scalar_{slot_idx} = ({c_type})scalar_val_{orig_idx};")
                     arg_setup_lines.append(f"kp.push_back((void*)&ptx_scalar_{slot_idx});")
                 else:
-                    arg_setup_lines.append(f"static thread_local {c_type} dummy_scalar_{slot_idx} = 0;")
+                    arg_setup_lines.append(f"static thread_local {c_type} dummy_scalar_{slot_idx} = 1;")
                     arg_setup_lines.append(f"kp.push_back((void*)&dummy_scalar_{slot_idx});")
 
         dynamic_args_cpp = "\n    ".join(arg_setup_lines)
@@ -263,6 +294,7 @@ void {kernel_name}::Compute(OrtKernelContext* context) {{
     static thread_local CUfunction mKernel = nullptr;
     
     if (mModule == nullptr) {{
+        cuInit(0);
         CUresult res = cuModuleLoadDataEx(&mModule, PTX_CODE, 0, nullptr, nullptr);
         if (res != CUDA_SUCCESS) throw std::runtime_error("Failed to load PTX module");
         res = cuModuleGetFunction(&mKernel, mModule, "{ptx_entry_name}");

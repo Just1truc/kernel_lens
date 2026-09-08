@@ -8,7 +8,7 @@ def get_onnx_node_class(kernel_name, manifest):
     if kernel_name in _ONNX_NODE_CACHE:
         return _ONNX_NODE_CACHE[kernel_name]
         
-    out_args = [a for a in manifest.arguments if a.kind == 'output']
+    out_args = [a for a in manifest.arguments if a.kind in ('output', 'inplace')]
     out_count = max(1, len(out_args))
     
     class TritonONNXNode(torch.autograd.Function):
@@ -92,10 +92,12 @@ class TritonGlobalONNXExporter:
                     
                     node_inputs = []
                     for arg_def in manifest.arguments:
-                        if arg_def.kind != 'input':
+                        if getattr(arg_def, 'is_constexpr', False):
+                            continue
+                        if arg_def.kind not in ('input', 'inplace', 'scalar'):
                             continue
 
-                        val = bound.arguments[arg_def.name]
+                        val = bound.arguments.get(arg_def.name, arg_def.value)
                         if isinstance(val, torch.SymInt):
                             val = unwrap(val)
                         
@@ -106,12 +108,14 @@ class TritonGlobalONNXExporter:
                         elif isinstance(val, (int, float, bool)):
                             dtype = torch.float32 if isinstance(val, float) else torch.int64
                             val = torch.tensor([val], dtype=dtype, device=target_device)
+                        elif isinstance(val, torch.Tensor):
+                            val = val.to(device=target_device)
                             
                         node_inputs.append(val)
                     
                     self.saved_args = node_inputs
                         
-                    target_outs = [bound.arguments[a.name] for a in manifest.arguments if a.kind == 'output']
+                    target_outs = [bound.arguments[a.name] for a in manifest.arguments if a.kind in ('output', 'inplace')]
                     if not target_outs:
                         target_outs = [args[0]]
                     ONNXNode = get_onnx_node_class(manifest.kernel_name, manifest)
@@ -120,7 +124,7 @@ class TritonGlobalONNXExporter:
                         debug_print(f"[ONNX EXPORT DEBUG] res shape: {res.shape if isinstance(res, torch.Tensor) else [r.shape for r in res]}")
                     
                     # 4. WIRE THE GRAPH TOGETHER
-                    out_idx = [i for i, a in enumerate(manifest.arguments) if a.kind == 'output']
+                    out_idx = [i for i, a in enumerate(manifest.arguments) if a.kind in ('output', 'inplace')]
                     if out_idx:
                         if len(out_idx) == 1:
                             target_out = bound.arguments[manifest.arguments[out_idx[0]].name]

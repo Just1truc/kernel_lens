@@ -10,17 +10,19 @@ def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
     replacing the need for an external bash script.
     """
     # 1. Prepare ORT release include/lib directory using stable C++ developer package
-    ort_release_dir = os.path.join(cache_dir, "onnxruntime-linux-x64-gpu-1.20.1")
+    parent_cache = os.path.dirname(cache_dir)
+    ort_release_dir = os.path.join(parent_cache, "onnxruntime-linux-x64-gpu-1.20.1")
     ort_inc = os.path.join(ort_release_dir, "include")
     ort_lib = os.path.join(ort_release_dir, "lib")
     
     if not os.path.exists(os.path.join(ort_inc, "onnxruntime_cxx_api.h")):
-        tgz_path = os.path.join(cache_dir, "ort_1.20.1.tgz")
+        tgz_path = os.path.join(parent_cache, "ort_1.20.1.tgz")
         url = "https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/onnxruntime-linux-x64-gpu-1.20.1.tgz"
         try:
-            subprocess.run(["curl", "-sL", url, "-o", tgz_path], check=True)
+            if not os.path.exists(tgz_path):
+                subprocess.run(["curl", "-sL", url, "-o", tgz_path], check=True)
             with tarfile.open(tgz_path, "r:gz") as tar:
-                tar.extractall(path=cache_dir)
+                tar.extractall(path=parent_cache)
         except Exception as e:
             print(f"[Builder Warning] Failed to download ORT headers: {e}")
 

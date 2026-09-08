@@ -225,6 +225,9 @@ class CompiledModel:
         import torch
         import os
         
+        if torch.cuda.is_available():
+            torch.cuda.init()
+            
         # =======================================================
         # 1. COLD START CACHE (Ne s'exécute qu'une seule fois)
         # =======================================================

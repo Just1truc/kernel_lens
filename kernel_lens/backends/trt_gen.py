@@ -24,7 +24,7 @@ class TensorRTPluginGenerator:
         supports_format_cxx = "return inOut[pos].format == nvinfer1::TensorFormat::kLINEAR;"
         
         output_dim_cases = []
-        out_args = [a for a in manifest.arguments if a.kind == 'output']
+        out_args = [a for a in manifest.arguments if a.kind in ('output', 'inplace')]
         for out_idx, out_arg in enumerate(out_args):
             output_dim_cases.append(f"if (outputIndex == {out_idx}) {{")
             output_dim_cases.append(f"    nvinfer1::DimsExprs res;")
@@ -63,7 +63,7 @@ public:
     const char* getPluginVersion() const noexcept override;
     
     int32_t getNbOutputs() const noexcept override {{ 
-        return {len([a for a in manifest.arguments if a.kind == 'output'])}; 
+        return {len([a for a in manifest.arguments if a.kind in ('output', 'inplace')])}; 
     }}
     
     using nvinfer1::IPluginV2Ext::configurePlugin;
@@ -144,7 +144,6 @@ private:
         # --- LOCAL TRT GRID AST EVALUATION ---
         import re
         
-        # --- LOCAL TRT GRID AST EVALUATION ---
         grid_strs = []
         if hasattr(manifest, '_sym_grid_asts') and manifest._sym_grid_asts:
             for g in manifest._sym_grid_asts:
@@ -153,10 +152,8 @@ private:
                 expr = expr.replace("//", "/")
                 expr = re.sub(r'floor\((.*?)\)', r'(\1)', expr)
                 
-                # Replace SymPy symbols with TRT C++
-                expr = re.sub(r'\bs0\b', "(int64_t)inputDesc[0].dims.d[0]", expr)
-                expr = re.sub(r'\bs1\b', "(int64_t)(inputDesc[0].dims.nbDims > 1 ? inputDesc[0].dims.d[1] : 1)", expr)
-                expr = re.sub(r'\bs2\b', "(int64_t)(inputDesc[0].dims.nbDims > 2 ? inputDesc[0].dims.d[2] : 1)", expr)
+                # Replace any s(\d+) symbol dynamically using regex
+                expr = re.sub(r'\bs(\d+)\b', r"(int64_t)(inputDesc[0].dims.nbDims > \1 ? inputDesc[0].dims.d[\1] : 1)", expr)
                 grid_strs.append(expr)
                 
         while len(grid_strs) < 3:
@@ -205,18 +202,17 @@ private:
                 p_decl = " ".join(parts[:-1])
                 ptx_params.append((p_decl, p_ident))
         active_args = [arg for arg in manifest.arguments if not getattr(arg, 'is_constexpr', False)]
-        ptr_args = [arg for arg in active_args if arg.kind in ('input', 'output')]
+        ptr_args = [arg for arg in active_args if arg.kind in ('input', 'output', 'inplace')]
         scalar_args = [arg for arg in active_args if arg.kind == 'scalar']
         num_ptr_args = len(ptr_args)
 
         ptx_ordered_slots = []
         for s_idx, (p_decl, p_ident) in enumerate(ptx_params):
             match = re.search(r'_param_(\d+)$', p_ident)
-            if match:
-                p_ident = match.group(1)
-            arg = active_args[s_idx] if s_idx < len(active_args) else None
+            param_num = int(match.group(1)) if match else s_idx
+            arg = active_args[param_num] if param_num < len(active_args) else (active_args[s_idx] if s_idx < len(active_args) else None)
             if arg:
-                is_ptr = arg.kind in ('input', 'output')
+                is_ptr = arg.kind in ('input', 'output', 'inplace')
             else:
                 is_ptr = ("ptr" in p_decl)
 
@@ -226,7 +222,7 @@ private:
             elif "f32" in p_decl: c_type = "float"
             elif "f64" in p_decl: c_type = "double"
             else: c_type = "int32_t"
-            ptx_ordered_slots.append({"type": c_type, "ident": p_ident, "is_ptr": is_ptr})
+            ptx_ordered_slots.append({"type": c_type, "ident": p_ident, "is_ptr": is_ptr, "param_num": param_num})
 
         num_ptx_slots = len(ptx_ordered_slots)
         in_counter = 0
@@ -235,7 +231,8 @@ private:
 
         for slot_idx, slot in enumerate(ptx_ordered_slots):
             c_type = slot["type"]
-            arg = active_args[slot_idx] if slot_idx < len(active_args) else None
+            param_num = slot["param_num"]
+            arg = active_args[param_num] if param_num < len(active_args) else (active_args[slot_idx] if slot_idx < len(active_args) else None)
 
             if slot["is_ptr"]:
                 if arg and arg.kind == 'input':
@@ -246,26 +243,45 @@ private:
                     arg_setup_lines.append(f"static thread_local void* tmp_ptr_{slot_idx}; tmp_ptr_{slot_idx} = (void*)outputs[{out_counter}];")
                     arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_ptr_{slot_idx};")
                     out_counter += 1
+                elif arg and arg.kind == 'inplace':
+                    arg_setup_lines.append(f"const void* in_ptr_{slot_idx} = inputs[{in_counter}];")
+                    arg_setup_lines.append(f"void* out_ptr_{slot_idx} = outputs[{out_counter}];")
+                    arg_setup_lines.append(f"size_t num_bytes_{slot_idx} = 1;")
+                    arg_setup_lines.append(f"for (int d = 0; d < inputDesc[{in_counter}].dims.nbDims; ++d) num_bytes_{slot_idx} *= inputDesc[{in_counter}].dims.d[d];")
+                    arg_setup_lines.append(f"num_bytes_{slot_idx} *= sizeof(float);")
+                    arg_setup_lines.append(f"if (in_ptr_{slot_idx} != out_ptr_{slot_idx}) {{ cudaMemcpyAsync(out_ptr_{slot_idx}, in_ptr_{slot_idx}, num_bytes_{slot_idx}, cudaMemcpyDeviceToDevice, stream); }}")
+                    arg_setup_lines.append(f"static thread_local void* tmp_ptr_{slot_idx}; tmp_ptr_{slot_idx} = out_ptr_{slot_idx};")
+                    arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_ptr_{slot_idx};")
+                    in_counter += 1
+                    out_counter += 1
                 else:
-                    arg_setup_lines.append(f"static thread_local void* tmp_null_{slot_idx} = nullptr;")
+                    arg_setup_lines.append(f"static thread_local int64_t tmp_null_{slot_idx} = 1;")
                     arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_null_{slot_idx};")
             else:
                 if arg and arg.kind == 'scalar':
-                    expr = getattr(arg, 'cxx_expr', '') or f"m_{arg.name}"
-                    scalar_ctype = "int64_t" if "64" in str(arg.dtype) else ("float" if ("float" in str(arg.dtype) or "float" in c_type or "double" in c_type) else "int32_t")
-                    arg_setup_lines.append(f"static thread_local {scalar_ctype} tmp_scalar_{slot_idx}; tmp_scalar_{slot_idx} = ({scalar_ctype})({expr});")
-                    arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_scalar_{slot_idx};")
+                    if not getattr(arg, 'is_constexpr', False) and in_counter < len(active_args):
+                        arg_setup_lines.append(f"const float* scalar_ptr_{slot_idx} = (const float*)inputs[{in_counter}];")
+                        arg_setup_lines.append(f"static thread_local {c_type} tmp_scalar_{slot_idx}; tmp_scalar_{slot_idx} = ({c_type})(scalar_ptr_{slot_idx}[0]);")
+                        arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_scalar_{slot_idx};")
+                        in_counter += 1
+                    else:
+                        expr = getattr(arg, 'cxx_expr', '') or f"m_{arg.name}"
+                        scalar_ctype = "int64_t" if "64" in str(arg.dtype) else ("float" if ("float" in str(arg.dtype) or "float" in c_type or "double" in c_type) else "int32_t")
+                        arg_setup_lines.append(f"static thread_local {scalar_ctype} tmp_scalar_{slot_idx}; tmp_scalar_{slot_idx} = ({scalar_ctype})({expr});")
+                        arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_scalar_{slot_idx};")
                 else:
-                    arg_setup_lines.append(f"static thread_local {c_type} tmp_scalar_{slot_idx} = 0;")
+                    arg_setup_lines.append(f"static thread_local {c_type} tmp_scalar_{slot_idx} = 1;")
                     arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_scalar_{slot_idx};")
-
 
         # --- DYNAMIC OUTPUT DATATYPES ---
         output_type_lines = []
-        out_args = [a for a in manifest.arguments if a.kind == 'output']
+        out_args = [a for a in manifest.arguments if a.kind in ('output', 'inplace')]
         for i, out_arg in enumerate(out_args):
-            # Map PyTorch/Triton dtypes to TensorRT Enums
-            if 'float16' in out_arg.dtype or 'half' in out_arg.dtype:
+            if 'bool' in out_arg.dtype:
+                trt_type = "nvinfer1::DataType::kBOOL"
+            elif 'uint8' in out_arg.dtype or 'int8' in out_arg.dtype:
+                trt_type = "nvinfer1::DataType::kINT8"
+            elif 'float16' in out_arg.dtype or 'half' in out_arg.dtype:
                 trt_type = "nvinfer1::DataType::kHALF"
             elif 'float' in out_arg.dtype:
                 trt_type = "nvinfer1::DataType::kFLOAT"
@@ -273,10 +289,8 @@ private:
                 trt_type = "nvinfer1::DataType::kINT64"
             elif 'int' in out_arg.dtype:
                 trt_type = "nvinfer1::DataType::kINT32"
-            elif 'bool' in out_arg.dtype:
-                trt_type = "nvinfer1::DataType::kBOOL"
             else:
-                trt_type = "inputTypes[0]" # Fallback
+                trt_type = "inputTypes[0]"
                 
             output_type_lines.append(f"if (index == {i}) return {trt_type};")
             
@@ -295,7 +309,7 @@ namespace {self.plugin_namespace}_{manifest.kernel_name} {{
 
 const char* {plugin_name}::PTX_CODE = {ptx_encoded};
 
-{plugin_name}::{plugin_name}() : mNbOutputs({len([a for a in manifest.arguments if a.kind == 'output'])}){init_str} {{
+{plugin_name}::{plugin_name}() : mNbOutputs({len([a for a in manifest.arguments if a.kind in ('output', 'inplace')])}){init_str} {{
     mNamespace = "{self.plugin_namespace}";
 }}
 
