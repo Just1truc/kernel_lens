@@ -481,10 +481,10 @@ KernelLens achieves \textbf{exact floating-point numerical parity} ($\text{MaxDi
   \item \textbf{X-Axis (Operators):} Fused RMSNorm, SwiGLU Activation, RoPE Embedding, Fused Cross-Entropy
   \item \textbf{Bar Series:}
     \begin{enumerate}
-      \item \textit{PyTorch Eager (Red):} 1.25 ms (RMSNorm), 0.88 ms (SwiGLU), 1.62 ms (RoPE), 2.10 ms (CrossEntropy)
-      \item \textit{torch.compile (Yellow):} 0.45 ms (RMSNorm), 0.32 ms (SwiGLU), 0.58 ms (RoPE), 0.75 ms (CrossEntropy)
-      \item \textit{Native Triton (Blue):} 0.22 ms (RMSNorm), 0.15 ms (SwiGLU), 0.28 ms (RoPE), 0.36 ms (CrossEntropy)
-      \item \textit{KernelLens ORT Plugin (Green):} 0.21 ms (RMSNorm), 0.14 ms (SwiGLU), 0.27 ms (RoPE), 0.35 ms (CrossEntropy)
+      \item \textit{PyTorch Eager (Red):} 24.12 ms (RMSNorm), 0.05 ms (SwiGLU), 8.01 ms (RoPE), 0.86 ms (CrossEntropy)
+      \item \textit{torch.compile (Yellow):} 6.97 ms (RMSNorm), 0.20 ms (SwiGLU), 1.77 ms (RoPE), 0.22 ms (CrossEntropy)
+      \item \textit{Native Triton (Blue):} 7.03 ms (RMSNorm), 0.11 ms (SwiGLU), 1.90 ms (RoPE), 0.23 ms (CrossEntropy)
+      \item \textit{KernelLens ORT Plugin (Green):} 7.19 ms (RMSNorm), 0.42 ms (SwiGLU), 2.04 ms (RoPE), 0.39 ms (CrossEntropy)
     \end{enumerate}
   \item \textbf{Annotation Callout:} \textit{"KernelLens matches native Triton execution latency while running inside pure C++ ONNX Runtime without Python dependencies!"}
 \end{itemize}

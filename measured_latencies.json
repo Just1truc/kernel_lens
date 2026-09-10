@@ -1,0 +1,26 @@
+{
+    "RMSNorm": {
+        "PyTorch Eager": 24.12029541015625,
+        "torch.compile": 6.97396240234375,
+        "Native Triton": 7.034700317382812,
+        "KernelLens ORT": 7.19382568359375
+    },
+    "SwiGLU": {
+        "PyTorch Eager": 0.05410863876342773,
+        "torch.compile": 0.19667936325073243,
+        "Native Triton": 0.11078656196594239,
+        "KernelLens ORT": 0.41616382598876955
+    },
+    "RoPE": {
+        "PyTorch Eager": 8.014487915039062,
+        "torch.compile": 1.7656820678710938,
+        "Native Triton": 1.9009880065917968,
+        "KernelLens ORT": 2.035447998046875
+    },
+    "CrossEntropy": {
+        "PyTorch Eager": 0.8617574310302735,
+        "torch.compile": 0.21717567443847657,
+        "Native Triton": 0.22806304931640625,
+        "KernelLens ORT": 0.3905228805541992
+    }
+}
