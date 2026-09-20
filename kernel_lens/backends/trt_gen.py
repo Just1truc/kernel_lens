@@ -21,6 +21,27 @@ class TensorRTPluginGenerator:
                 constant_decls.append(f"{ctype} m_{arg.name};")
         dynamic_members_cpp = "\n    ".join(constant_decls)
 
+        def get_trt_datatype(dtype_obj):
+            dtype_str = str(dtype_obj).lower()
+            if 'float8' in dtype_str or 'fp8' in dtype_str or 'e4m3' in dtype_str or 'e5m2' in dtype_str:
+                return "nvinfer1::DataType::kFP8"
+            elif 'bool' in dtype_str:
+                return "nvinfer1::DataType::kBOOL"
+            elif 'uint8' in dtype_str or 'int8' in dtype_str or 'int4' in dtype_str or 'uint4' in dtype_str:
+                return "nvinfer1::DataType::kINT8"
+            elif 'float16' in dtype_str or 'half' in dtype_str:
+                return "nvinfer1::DataType::kHALF"
+            elif 'float' in dtype_str:
+                return "nvinfer1::DataType::kFLOAT"
+            elif 'int64' in dtype_str or 'long' in dtype_str:
+                return "nvinfer1::DataType::kINT64"
+            elif 'int' in dtype_str:
+                return "nvinfer1::DataType::kINT32"
+            else:
+                return "nvinfer1::DataType::kFLOAT"
+
+        in_args = [a for a in manifest.arguments if a.kind in ('input', 'inplace')]
+
         supports_format_cxx = "return inOut[pos].format == nvinfer1::TensorFormat::kLINEAR;"
         
         output_dim_cases = []
@@ -137,7 +158,9 @@ private:
 
     def _generate_kernel_cu(self, manifest: KernelManifest) -> str:
         plugin_name = f"{manifest.kernel_name}Plugin"
-        ptx_encoded = json.dumps(manifest.ptx)
+        ptx_str = manifest.ptx
+        ptx_str = re.sub(r'\.version\s+9\.\d+', '.version 9.0', ptx_str)
+        ptx_encoded = json.dumps(ptx_str)
         block_size = (manifest.num_warps if manifest.num_warps > 0 else 4) * 32
         
         scalars = [arg for arg in manifest.arguments if arg.kind == 'scalar']
@@ -145,7 +168,6 @@ private:
         nb_outputs = max(1, nb_outputs)
         
         # --- LOCAL TRT GRID AST EVALUATION ---
-        import re
         
         grid_strs = []
         if hasattr(manifest, '_sym_grid_asts') and manifest._sym_grid_asts:
@@ -262,16 +284,10 @@ private:
                     arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_null_{slot_idx};")
             else:
                 if arg and arg.kind == 'scalar':
-                    if not getattr(arg, 'is_constexpr', False) and in_counter < len(active_args):
-                        arg_setup_lines.append(f"const float* scalar_ptr_{slot_idx} = (const float*)inputs[{in_counter}];")
-                        arg_setup_lines.append(f"static thread_local {c_type} tmp_scalar_{slot_idx}; tmp_scalar_{slot_idx} = ({c_type})(scalar_ptr_{slot_idx}[0]);")
-                        arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_scalar_{slot_idx};")
-                        in_counter += 1
-                    else:
-                        expr = getattr(arg, 'cxx_expr', '') or f"m_{arg.name}"
-                        scalar_ctype = "int64_t" if "64" in str(arg.dtype) else ("float" if ("float" in str(arg.dtype) or "float" in c_type or "double" in c_type) else "int32_t")
-                        arg_setup_lines.append(f"static thread_local {scalar_ctype} tmp_scalar_{slot_idx}; tmp_scalar_{slot_idx} = ({scalar_ctype})({expr});")
-                        arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_scalar_{slot_idx};")
+                    expr = getattr(arg, 'cxx_expr', '') or f"m_{arg.name}"
+                    scalar_ctype = "int64_t" if "64" in str(arg.dtype) else ("float" if ("float" in str(arg.dtype) or "float" in c_type or "double" in c_type) else "int32_t")
+                    arg_setup_lines.append(f"static thread_local {scalar_ctype} tmp_scalar_{slot_idx}; tmp_scalar_{slot_idx} = ({scalar_ctype})({expr});")
+                    arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_scalar_{slot_idx};")
                 else:
                     arg_setup_lines.append(f"static thread_local {c_type} tmp_scalar_{slot_idx} = 1;")
                     arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_scalar_{slot_idx};")
@@ -339,12 +355,31 @@ const char* {plugin_name}::getPluginVersion() const noexcept {{ return "{self.pl
 int32_t {plugin_name}::initialize() noexcept {{
     if (mModule == nullptr) {{
         cuInit(0);
+        CUcontext ctx = nullptr;
+        cuCtxGetCurrent(&ctx);
+        if (ctx == nullptr) {{
+            CUdevice cuDev;
+            cuDeviceGet(&cuDev, 0);
+            cuDevicePrimaryCtxRetain(&ctx, cuDev);
+            cuCtxSetCurrent(ctx);
+        }}
         CUresult res = cuModuleLoadDataEx(&mModule, PTX_CODE, 0, nullptr, nullptr);
-        if (res != CUDA_SUCCESS) return -1;
-        
+        if (res != CUDA_SUCCESS) {{
+            fprintf(stderr, "TRT_INIT_ERROR: cuModuleLoadDataEx failed with code %d\\n", (int)res);
+            return -1;
+        }}
         res = cuModuleGetFunction(&mKernel, mModule, "{ptx_entry_name}");
-        if (res != CUDA_SUCCESS) return -1;
-        cuFuncSetAttribute(mKernel, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, {manifest.shared_memory_bytes});
+        if (res != CUDA_SUCCESS) {{
+            fprintf(stderr, "TRT_INIT_ERROR: cuModuleGetFunction failed with code %d for entry %s\\n", (int)res, "{ptx_entry_name}");
+            return -1;
+        }}
+        if ({manifest.shared_memory_bytes} > 0) {{
+            res = cuFuncSetAttribute(mKernel, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, {manifest.shared_memory_bytes});
+            if (res != CUDA_SUCCESS) {{
+                fprintf(stderr, "TRT_INIT_ERROR: cuFuncSetAttribute failed with code %d\\n", (int)res);
+                return -1;
+            }}
+        }}
     }}
     return 0;
 }}
@@ -358,7 +393,13 @@ void {plugin_name}::terminate() noexcept {{
 
 int32_t {plugin_name}::enqueue(const nvinfer1::PluginTensorDesc* inputDesc, const nvinfer1::PluginTensorDesc* outputDesc, const void* const* inputs, void* const* outputs, void* workspace, cudaStream_t stream) noexcept {{
 
-    if (!mKernel) this->initialize();
+    if (!mKernel) {{
+        int32_t res = this->initialize();
+        if (res != 0 || !mKernel) {{
+            fprintf(stderr, "TRT_ENQUEUE_ERROR: initialize failed or mKernel is null in enqueue\\n");
+            return -1;
+        }}
+    }}
 
     unsigned int grid_x = std::max(1u, (unsigned int)({grid_x_cxx}));
     unsigned int grid_y = std::max(1u, (unsigned int)({grid_y_cxx}));
@@ -368,7 +409,11 @@ int32_t {plugin_name}::enqueue(const nvinfer1::PluginTensorDesc* inputDesc, cons
     void* kernelParams[{num_ptx_slots}];
     {dynamic_args_cpp}
 
-    cuLaunchKernel(mKernel, grid_x, grid_y, grid_z, block_x, 1, 1, {manifest.shared_memory_bytes}, stream, kernelParams, nullptr);
+    CUresult launch_res = cuLaunchKernel(mKernel, grid_x, grid_y, grid_z, block_x, 1, 1, {manifest.shared_memory_bytes}, stream, kernelParams, nullptr);
+    if (launch_res != CUDA_SUCCESS) {{
+        fprintf(stderr, "TRT_ENQUEUE_ERROR: cuLaunchKernel failed with code %d\\n", (int)launch_res);
+        return -1;
+    }}
 
     return 0;
 }}
@@ -460,9 +505,17 @@ extern "C" {{
         if (g_registered) return true;
         auto* registry = ::getPluginRegistry();
         if (registry != nullptr) {{
-            auto* creator = new {self.plugin_namespace}_{manifest.kernel_name}::{plugin_name}Creator();
-            creator->setPluginNamespace("triton_custom");
-            registry->registerCreator(*creator, "triton_custom");
+            auto* creator1 = new {self.plugin_namespace}_{manifest.kernel_name}::{plugin_name}Creator();
+            creator1->setPluginNamespace("triton_custom");
+            registry->registerCreator(*creator1, "triton_custom");
+
+            struct AliasCreator : public {self.plugin_namespace}_{manifest.kernel_name}::{plugin_name}Creator {{
+                const char* getPluginName() const noexcept override {{ return "{manifest.kernel_name}triton_custom"; }}
+            }};
+            auto* creator2 = new AliasCreator();
+            creator2->setPluginNamespace("triton_custom");
+            registry->registerCreator(*creator2, "triton_custom");
+
             g_registered = true;
             return true;
         }}

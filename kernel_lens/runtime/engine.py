@@ -301,17 +301,25 @@ class CompiledModel:
                 if has_dynamic:
                     config.add_optimization_profile(profile)
 
-                # Set dynamic range for any INT8 tensors in the network
+                # Set dynamic range ONLY for network inputs/outputs with DataType Int8
                 for i in range(network.num_inputs):
                     t = network.get_input(i)
                     if t.dtype == trt.DataType.INT8:
-                        t.set_dynamic_range(-128.0, 127.0)
+                        try:
+                            t.set_dynamic_range(-128.0, 127.0)
+                        except Exception:
+                            pass
                 for i in range(network.num_outputs):
                     t = network.get_output(i)
                     if t.dtype == trt.DataType.INT8:
-                        t.set_dynamic_range(-128.0, 127.0)
+                        try:
+                            t.set_dynamic_range(-128.0, 127.0)
+                        except Exception:
+                            pass
                 
                 serialized_engine = builder.build_serialized_network(network, config)
+                if serialized_engine is None:
+                    raise RuntimeError("❌ TensorRT Engine Building Error: builder.build_serialized_network returned None.")
                 with open(engine_path, "wb") as f:
                     f.write(serialized_engine)
             # ---------------------------------------------------
@@ -398,6 +406,6 @@ class CompiledModel:
                 torch_outputs.append(out_t)
                 out_idx += 1
 
-        self._trt_context.execute_async_v3(self._trt_stream.cuda_stream)
+        self._trt_context.execute_async_v3(stream_handle=self._trt_stream.cuda_stream)
         torch.cuda.current_stream().wait_stream(self._trt_stream)
         return torch_outputs[0] if len(torch_outputs) == 1 else tuple(torch_outputs)

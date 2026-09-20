@@ -149,7 +149,8 @@ def run_precision_tests():
         out1_triton = model1(x1)
 
     kl_model1 = kl.compile(model1, (x1,), name="LayerNorm_Test", backends=["tensorrt"])
-    trt_out1 = kl_model1.run((x1,), backend="tensorrt")[0]
+    res1 = kl_model1.run((x1,), backend="tensorrt")
+    trt_out1 = res1[0] if isinstance(res1, (tuple, list)) else res1
 
     diff_trt1 = (out1_triton - torch.as_tensor(trt_out1, device=device)).abs().max().item()
 
@@ -166,7 +167,8 @@ def run_precision_tests():
         out2_triton = model2(x2)
 
     kl_model2 = kl.compile(model2, (x2,), name="Gemm_Sigmoid_Test", backends=["tensorrt"])
-    trt_out2 = kl_model2.run((x2,), backend="tensorrt")[0]
+    res2 = kl_model2.run((x2,), backend="tensorrt")
+    trt_out2 = res2[0] if isinstance(res2, (tuple, list)) else res2
 
     diff_trt2 = (out2_triton - torch.as_tensor(trt_out2, device=device)).abs().max().item()
 
