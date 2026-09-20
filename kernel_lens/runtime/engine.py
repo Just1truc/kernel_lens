@@ -243,12 +243,26 @@ class CompiledModel:
             onnx_path = os.path.join(self.cache_dir, f"{self.model_name}.onnx")
             engine_path = os.path.join(self.cache_dir, f"{self.model_name}.engine")
             
+            import sys
+            for site_p in sys.path:
+                for lib_folder in ["tensorrt_libs", "tensorrt", "tensorrt_cu12_libs", "tensorrt_cu13_libs", "tensorrt_cu11_libs"]:
+                    p = os.path.join(site_p, lib_folder)
+                    if os.path.exists(p):
+                        for f in sorted(os.listdir(p)):
+                            if f.startswith("libnvinfer") or f.startswith("libnvonnxparser"):
+                                try:
+                                    ctypes.CDLL(os.path.join(p, f), mode=ctypes.RTLD_GLOBAL)
+                                except Exception:
+                                    pass
+
+            TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
+            if hasattr(trt, "init_libnvinfer_plugins"):
+                trt.init_libnvinfer_plugins(TRT_LOGGER, "")
+
             dll = ctypes.CDLL(so_path, mode=ctypes.RTLD_GLOBAL)
             if hasattr(dll, "register_triton_plugins_explicit"):
                 dll.register_triton_plugins_explicit.restype = ctypes.c_bool
                 dll.register_triton_plugins_explicit()
-            TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
-            trt.init_libnvinfer_plugins(TRT_LOGGER, "")
             
             # --- CONSTRUCTION DU MOTEUR (S'il n'existe pas) ---
             if not os.path.exists(engine_path):

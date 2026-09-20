@@ -2,13 +2,66 @@ import os
 import subprocess
 import urllib.request
 import tarfile
+import shutil
 import onnxruntime
+
+from ..utils.env_check import find_nvcc
+
+def get_cuda_home() -> str:
+    nvcc_path = find_nvcc()
+    if nvcc_path:
+        return os.path.dirname(os.path.dirname(nvcc_path))
+    if os.environ.get("CUDA_HOME"):
+        return os.environ["CUDA_HOME"]
+    if os.environ.get("CONDA_PREFIX"):
+        return os.environ["CONDA_PREFIX"]
+    import sys
+    return sys.prefix
+
+def ensure_cuda_compat():
+    """
+    Checks if Conda's CUDA toolkit crt/math_functions.h has the known glibc 2.38+ incompatibility bug
+    (where cospi, sinpi, rsqrt, cospif, sinpif, rsqrtf lack __THROW/noexcept).
+    If present and writable, patches crt/math_functions.h in place.
+    """
+    try:
+        search_dirs = []
+        nvcc_path = find_nvcc()
+        if nvcc_path:
+            search_dirs.append(os.path.dirname(os.path.dirname(nvcc_path)))
+        if os.environ.get("CUDA_HOME"):
+            search_dirs.append(os.environ["CUDA_HOME"])
+        if os.environ.get("CONDA_PREFIX"):
+            search_dirs.append(os.environ["CONDA_PREFIX"])
+        import sys
+        search_dirs.append(sys.prefix)
+        home = os.path.expanduser("~")
+        for sub in ["miniconda3", "miniconda", "anaconda3", "anaconda", "TRELLIS.2/miniconda3"]:
+            search_dirs.append(os.path.join(home, sub))
+        
+        for base_dir in search_dirs:
+            math_hdr = os.path.join(base_dir, "include", "crt", "math_functions.h")
+            if os.path.exists(math_hdr) and os.access(math_hdr, os.W_OK):
+                with open(math_hdr, "r") as f:
+                    content = f.read()
+                if "double                 cospi(double x);" in content:
+                    content = content.replace("double                 cospi(double x);", "double                 cospi(double x) __THROW;")
+                    content = content.replace("double                 sinpi(double x);", "double                 sinpi(double x) __THROW;")
+                    content = content.replace("double                 rsqrt(double x);", "double                 rsqrt(double x) __THROW;")
+                    content = content.replace("float                  cospif(float x);", "float                  cospif(float x) __THROW;")
+                    content = content.replace("float                  sinpif(float x);", "float                  sinpif(float x) __THROW;")
+                    content = content.replace("float                  rsqrtf(float x);", "float                  rsqrtf(float x) __THROW;")
+                    with open(math_hdr, "w") as f:
+                        f.write(content)
+    except Exception:
+        pass
 
 def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
     """
     Natively compiles the generated C++ files into a Shared Library (.so)
     replacing the need for an external bash script.
     """
+    ensure_cuda_compat()
     # 1. Prepare ORT release include/lib directory using stable C++ developer package
     parent_cache = os.path.dirname(cache_dir)
     ort_release_dir = os.path.join(parent_cache, "onnxruntime-linux-x64-gpu-1.20.1")
@@ -26,11 +79,6 @@ def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
         except Exception as e:
             print(f"[Builder Warning] Failed to download ORT headers: {e}")
 
-
-
-    
-    # # 3. Dynamically find CUDA paths via nvcc
-    # print("     [Builder] Querying system for CUDA configuration...")
     cuda_inc = "/usr/local/cuda/include"
     try:
         import triton
@@ -40,30 +88,24 @@ def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
     except Exception:
         pass
 
+    cuda_home = get_cuda_home()
     if cuda_inc == "/usr/local/cuda/include":
-        try:
-            nvcc_path = subprocess.check_output(["which", "nvcc"]).decode().strip()
-            cuda_home = os.path.dirname(os.path.dirname(nvcc_path))
-            cand = os.path.join(cuda_home, "include")
-            if os.path.exists(os.path.join(cand, "cuda.h")) and not os.path.exists(os.path.join(cand, "crt", "math_functions.h")):
-                cuda_inc = cand
-        except Exception:
-            pass
+        cand = os.path.join(cuda_home, "include")
+        if os.path.exists(os.path.join(cand, "cuda.h")) and not os.path.exists(os.path.join(cand, "crt", "math_functions.h")):
+            cuda_inc = cand
 
     cuda_lib = "/usr/local/cuda/lib64"
-    try:
-        nvcc_path = subprocess.check_output(["which", "nvcc"]).decode().strip()
-        cuda_home = os.path.dirname(os.path.dirname(nvcc_path))
-        for cand in [os.path.join(cuda_home, "lib64"), os.path.join(cuda_home, "lib"), "/usr/lib/x86_64-linux-gnu", "/usr/lib64"]:
-            if os.path.exists(cand) and any(f.startswith("libcudart") for f in os.listdir(cand)):
-                cuda_lib = cand
-                break
-            elif os.path.exists(cand):
-                cuda_lib = cand
-    except Exception:
-        pass
-    # print(f"     [Builder] Detected CUDA at {cuda_home}")
-    
+    for cand in [
+        os.path.join(cuda_home, "lib64"),
+        os.path.join(cuda_home, "lib"),
+        os.path.join(cuda_home, "targets", "x86_64-linux", "lib"),
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib64"
+    ]:
+        if os.path.exists(cand) and any(f.startswith("libcudart") for f in os.listdir(cand)):
+            cuda_lib = cand
+            break
+
     # 4. Compile the .cu files into object files
     cu_files = [f for f in os.listdir(ort_plugins_dir) if f.endswith(".cu")]
     obj_files = []
@@ -105,7 +147,6 @@ def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
             print(f"[NVCC ERROR] {res.stderr}")
             res.check_returncode()
 
-        
     # 5. Compile the registrar (register_ops.cpp)
     reg_cpp = os.path.join(ort_plugins_dir, "register_ops.cpp")
     reg_obj = os.path.join(ort_plugins_dir, "register_ops.o")
@@ -126,29 +167,29 @@ def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
     ] + obj_files + [
         f"-L{ort_lib}", "-lonnxruntime",
         f"-L{cuda_lib}", "-lcuda", "-lcudart",
-        f"-Wl,-rpath,{abs_ort_lib}"
+        f"-Wl,-rpath,{abs_ort_lib}", f"-Wl,-rpath,{cuda_lib}"
     ]
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
-    # print(f"     [Builder] Compilation successful! Plugin saved to {so_path}")
 
 def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
     """
     Natively compiles the generated C++ files into a TensorRT Shared Library (.so).
     """
-    # print("     [Builder] Querying system for CUDA configuration...")
-    try:
-        nvcc_path = subprocess.check_output(["which", "nvcc"]).decode().strip()
-        cuda_home = os.path.dirname(os.path.dirname(nvcc_path))
-    except Exception:
-        cuda_home = "/usr/local/cuda"
-        
+    ensure_cuda_compat()
+    cuda_home = get_cuda_home()
     cuda_inc = os.path.join(cuda_home, "include")
-    cuda_lib = os.path.join(cuda_home, "lib64")
-    
-    # In TRT 8.6+, the library is often split into nvinfer and nvinfer_plugin
-    # We will assume standard system paths for TRT (/usr/lib/x86_64-linux-gnu or LD_LIBRARY_PATH)
-    
+    cuda_lib = "/usr/local/cuda/lib64"
+    for cand in [
+        os.path.join(cuda_home, "lib64"),
+        os.path.join(cuda_home, "lib"),
+        os.path.join(cuda_home, "targets", "x86_64-linux", "lib"),
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib64"
+    ]:
+        if os.path.exists(cand) and any(f.startswith("libcudart") for f in os.listdir(cand)):
+            cuda_lib = cand
+            break
+            
     cu_files = [f for f in os.listdir(trt_plugins_dir) if f.endswith(".cu")]
     obj_files = []
     
@@ -279,7 +320,6 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
                 )
             raise RuntimeError(f"❌ NVCC Compilation Failed:\n{res.stderr}")
 
-
     so_path = os.path.join(trt_plugins_dir, "libtriton_trt_plugins.so")
     
     trt_lib_dirs = []
@@ -292,17 +332,22 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
     except Exception:
         pass
 
-
-
     extra_link_args = []
+    nvinfer_link_flag = ["-lnvinfer"]
     for d in trt_lib_dirs:
         extra_link_args.extend([f"-L{d}", f"-Wl,-rpath,{d}"])
+        if not os.path.exists(os.path.join(d, "libnvinfer.so")):
+            for f in os.listdir(d):
+                if f.startswith("libnvinfer.so."):
+                    nvinfer_link_flag = [os.path.join(d, f)]
+                    break
 
+    cpp_compiler = "g++-13" if os.path.exists("/usr/bin/g++-13") else "g++"
     cmd = [
-        "g++", "-shared", "-o", so_path
+        cpp_compiler, "-shared", "-o", so_path
     ] + obj_files + [
-        f"-L{cuda_lib}", "-lcuda", "-lcudart"
-    ] + extra_link_args + ["-lnvinfer"]
+        f"-L{cuda_lib}", "-lcuda", "-lcudart", f"-Wl,-rpath,{cuda_lib}"
+    ] + extra_link_args + nvinfer_link_flag
     
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
