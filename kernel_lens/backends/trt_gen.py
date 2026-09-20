@@ -66,6 +66,9 @@ public:
         return {len([a for a in manifest.arguments if a.kind in ('output', 'inplace')])}; 
     }}
     
+    using nvinfer1::IPluginV2::getOutputDimensions;
+    using nvinfer1::IPluginV2::getWorkspaceSize;
+    using nvinfer1::IPluginV2::enqueue;
     using nvinfer1::IPluginV2Ext::configurePlugin;
 
     nvinfer1::DimsExprs getOutputDimensions(int32_t outputIndex, const nvinfer1::DimsExprs* inputs, int32_t nbInputs, nvinfer1::IExprBuilder& exprBuilder) noexcept override {{

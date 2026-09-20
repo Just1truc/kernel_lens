@@ -45,7 +45,7 @@ def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
             nvcc_path = subprocess.check_output(["which", "nvcc"]).decode().strip()
             cuda_home = os.path.dirname(os.path.dirname(nvcc_path))
             cand = os.path.join(cuda_home, "include")
-            if os.path.exists(os.path.join(cand, "cuda.h")):
+            if os.path.exists(os.path.join(cand, "cuda.h")) and not os.path.exists(os.path.join(cand, "crt", "math_functions.h")):
                 cuda_inc = cand
         except Exception:
             pass
@@ -245,7 +245,11 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
                 + "=" * 80
             )
 
-        inc_flags = [f"-I{d}" for d in trt_inc_dirs]
+        inc_flags = [
+            f"-I{d}" for d in trt_inc_dirs
+            if (os.path.exists(os.path.join(d, "NvInfer.h")) or os.path.exists(os.path.join(d, "NvInferPlugin.h")))
+            and not os.path.exists(os.path.join(d, "crt", "math_functions.h"))
+        ]
 
         cpp_compiler = "g++-13" if os.path.exists("/usr/bin/g++-13") else "g++"
         ccbin_flag = ["-ccbin", cpp_compiler] if os.path.exists(f"/usr/bin/{cpp_compiler}") else []
@@ -253,7 +257,8 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
         cmd = [
             "nvcc", "-c", cu_path, "-o", obj_path, "-O3", arch_flag, "-Xcompiler", "-fPIC", "-Xcompiler", "-D_GNU_SOURCE",
             "-allow-unsupported-compiler",
-            "-Wno-deprecated-gpu-targets"
+            "-Wno-deprecated-gpu-targets",
+            "-diag-suppress", "997"
         ] + ccbin_flag + inc_flags
 
         res = subprocess.run(cmd, capture_output=True, text=True)
