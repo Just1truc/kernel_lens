@@ -240,44 +240,12 @@ def run_edge_case_test(model, inputs, name, native_fn, verbose=False):
     triton_out = model(*inputs)
     triton_lat = benchmark_latency(model, inputs)
 
-    def is_trt_available():
-        try:
-            import tensorrt
-            import sys
-            trt_inc_dirs = []
-            if os.environ.get("TENSORRT_INCLUDE_DIR"):
-                trt_inc_dirs.append(os.environ["TENSORRT_INCLUDE_DIR"])
-            user_trt_inc = os.path.expanduser("~/tensorrt_headers")
-            if os.path.exists(user_trt_inc):
-                trt_inc_dirs.append(user_trt_inc)
-            trt_pkg_dir = os.path.dirname(tensorrt.__file__)
-            parent_dir = os.path.dirname(trt_pkg_dir)
-            for c in [
-                os.path.join(trt_pkg_dir, "include"),
-                os.path.join(parent_dir, "tensorrt_libs", "include"),
-                os.path.join(sys.prefix, "include"),
-                "/usr/include",
-                "/usr/local/include",
-            ]:
-                if os.path.exists(c) and c not in trt_inc_dirs:
-                    trt_inc_dirs.append(c)
-            for d in trt_inc_dirs:
-                if os.path.exists(os.path.join(d, "NvInferPlugin.h")) or os.path.exists(os.path.join(d, "NvInfer.h")):
-                    return True
-            return False
-        except Exception:
-            return False
-
-    trt_out = None
-    trt_lat = 0.0
-    err_trt = 0.0
-
-    if is_trt_available():
-        print("[3/4] Kernel Lens -> TensorRT Plugin...")
-        kl_model_trt = kl.compile(model, inputs, name=f"{name}_trt", backends=["tensorrt"], verbose=verbose)
-        with torch.no_grad():
-            trt_out = kl_model_trt.run(inputs, backend="tensorrt")
-        trt_lat = benchmark_latency(kl_model_trt.run, (inputs,), {"backend": "tensorrt"})
+    # 3. Kernel Lens -> TensorRT
+    print("[3/4] Kernel Lens -> TensorRT Plugin...")
+    kl_model_trt = kl.compile(model, inputs, name=f"{name}_trt", backends=["tensorrt"], verbose=verbose)
+    with torch.no_grad():
+        trt_out = kl_model_trt.run(inputs, backend="tensorrt")
+    trt_lat = benchmark_latency(kl_model_trt.run, (inputs,), {"backend": "tensorrt"})
 
     # 4. Kernel Lens -> ONNX Runtime
     print("[4/4] Kernel Lens -> ONNX Runtime Plugin...")
@@ -288,29 +256,24 @@ def run_edge_case_test(model, inputs, name, native_fn, verbose=False):
 
     # Compute Max Diff
     def calc_diff(a, b):
-        if a is None or b is None:
-            return 0.0
         if isinstance(a, (tuple, list)):
             return max(torch.max(torch.abs(a_i - b_i)).item() for a_i, b_i in zip(a, b))
         return torch.max(torch.abs(a - b)).item()
 
-    if trt_out is not None:
-        err_trt = calc_diff(triton_out, trt_out)
+    err_trt = calc_diff(triton_out, trt_out)
     err_ort = calc_diff(triton_out, ort_out)
     max_err = max(err_trt, err_ort)
 
     speedup_trt = triton_lat / trt_lat if trt_lat > 0 else 0
-    speedup_ort = triton_lat / ort_lat if ort_lat > 0 else 0
 
     print("\n📊 EDGE CASE RESULTS:")
     print(f"  -> Triton (Python):   {triton_lat:.4f} ms")
-    print(f"  -> Kernel Lens (ORT): {ort_lat:.4f} ms ({speedup_ort:.2f}x speedup)")
-    if trt_out is not None:
-        print(f"  -> Kernel Lens (TRT): {trt_lat:.4f} ms ({speedup_trt:.2f}x speedup)")
+    print(f"  -> Kernel Lens (ORT): {ort_lat:.4f} ms")
+    print(f"  -> Kernel Lens (TRT): {trt_lat:.4f} ms")
     print(f"  -------------------------------------")
+    print(f"  🏆 SPEEDUP TRT vs Triton: {speedup_trt:.2f}x")
+    print(f"  -> Max Diff TRT vs Triton: {err_trt:.6e}")
     print(f"  -> Max Diff ORT vs Triton: {err_ort:.6e}")
-    if trt_out is not None:
-        print(f"  -> Max Diff TRT vs Triton: {err_trt:.6e}")
     if max_err < 1e-4:
         print("  -> Numerical Parity: ✅ PASSED (Bit-wise Exact / Parity OK)")
     else:

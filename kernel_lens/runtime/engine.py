@@ -354,7 +354,14 @@ class CompiledModel:
         for i in range(self._trt_engine.num_io_tensors):
             name = self._trt_engine.get_tensor_name(i)
             if self._trt_engine.get_tensor_mode(name) == trt.TensorIOMode.OUTPUT:
-                shape = tuple(self._trt_context.get_tensor_shape(name))
+                raw_shape = self._trt_context.get_tensor_shape(name)
+                if any(s < 0 for s in raw_shape):
+                    if self.output_shapes and out_idx < len(self.output_shapes):
+                        shape = tuple(self.output_shapes[out_idx])
+                    else:
+                        shape = tuple(s if s >= 0 else 1 for s in raw_shape)
+                else:
+                    shape = tuple(raw_shape)
                 out_dtype = self.output_dtypes[out_idx] if (self.output_dtypes and out_idx < len(self.output_dtypes)) else torch.float32
                 out_t = torch.empty(shape, device='cuda', dtype=out_dtype)
                 self._trt_context.set_tensor_address(name, out_t.data_ptr())

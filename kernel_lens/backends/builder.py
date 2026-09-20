@@ -183,15 +183,42 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
                 os.path.join(parent_dir, "tensorrt_libs", "include"),
                 os.path.join(parent_dir, "tensorrt_cu12_libs", "include"),
                 os.path.join(parent_dir, "tensorrt_cu13_libs", "include"),
+                os.path.join(parent_dir, "tensorrt_include"),
                 os.path.join(sys.prefix, "include"),
+                os.path.join(sys.prefix, "local", "include"),
+                os.path.join(cuda_home, "include"),
                 "/usr/include",
                 "/usr/local/include",
                 "/usr/include/x86_64-linux-gnu",
+                "/opt/tensorrt/include",
+                "/usr/local/tensorrt/include",
+                "/usr/include/tensorrt",
             ]:
                 if os.path.exists(c) and c not in trt_inc_dirs:
                     trt_inc_dirs.append(c)
         except Exception:
             pass
+
+        header_found = False
+        for d in trt_inc_dirs:
+            if os.path.exists(os.path.join(d, "NvInferPlugin.h")) or os.path.exists(os.path.join(d, "NvInfer.h")):
+                header_found = True
+                break
+
+        if not header_found:
+            raise RuntimeError(
+                "\n" + "=" * 80 + "\n"
+                "❌ TENSORRT COMPILATION ERROR: TensorRT C++ headers (NvInferPlugin.h / NvInfer.h) not found!\n\n"
+                "KernelLens requires TensorRT C++ headers to compile TensorRT plugins.\n\n"
+                "To resolve this issue:\n"
+                "1. If TensorRT C++ headers are installed on your system, specify their location via:\n"
+                "   export TENSORRT_INCLUDE_DIR=/path/to/tensorrt/include\n\n"
+                "2. Or install TensorRT Python libraries with headers:\n"
+                "   pip install tensorrt-cu12-libs  (or pip install tensorrt_libs)\n\n"
+                "3. Or copy NvInfer.h and NvInferPlugin.h into ~/tensorrt_headers/\n\n"
+                "4. If you only wish to use ONNX Runtime backend, pass backends=['onnx'] to kl.compile().\n"
+                + "=" * 80
+            )
 
         inc_flags = [f"-I{d}" for d in trt_inc_dirs]
 
@@ -211,7 +238,15 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
         if res.returncode != 0:
             print(f"[NVCC ERROR] {res.stderr}")
             if "NvInfer" in res.stderr and "No such file or directory" in res.stderr:
-                raise RuntimeError("TensorRT compilation failed: NvInferPlugin.h or NvInfer.h header not found. Please install TensorRT headers or set TENSORRT_INCLUDE_DIR environment variable.")
+                raise RuntimeError(
+                    "\n" + "=" * 80 + "\n"
+                    "❌ TENSORRT COMPILATION ERROR: NvInferPlugin.h or NvInfer.h header file not found during compilation!\n\n"
+                    "To resolve this issue:\n"
+                    "1. Set environment variable: export TENSORRT_INCLUDE_DIR=/path/to/tensorrt/include\n"
+                    "2. Or install: pip install tensorrt-cu12-libs\n"
+                    "3. Or copy NvInfer.h and NvInferPlugin.h to ~/tensorrt_headers/\n"
+                    + "=" * 80
+                )
             res.check_returncode()
 
 
