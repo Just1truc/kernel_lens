@@ -173,43 +173,66 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
         user_trt_inc = os.path.expanduser("~/tensorrt_headers")
         if os.path.exists(user_trt_inc):
             trt_inc_dirs.append(user_trt_inc)
+
+        import sys
+        search_candidates = [
+            os.path.join(sys.prefix, "include"),
+            os.path.join(sys.prefix, "local", "include"),
+            os.path.join(cuda_home, "include"),
+            "/usr/local/cuda/include",
+            "/usr/local/cuda-12/include",
+            "/usr/local/cuda-12.4/include",
+            "/usr/local/cuda-12.2/include",
+            "/usr/local/cuda-12.1/include",
+            "/usr/local/cuda-11/include",
+            "/usr/include",
+            "/usr/local/include",
+            "/usr/include/x86_64-linux-gnu",
+            "/opt/tensorrt/include",
+            "/usr/local/tensorrt/include",
+            "/usr/include/tensorrt",
+        ]
+
+        for site_p in sys.path:
+            if "site-packages" in site_p or "dist-packages" in site_p:
+                search_candidates.extend([
+                    os.path.join(site_p, "tensorrt", "include"),
+                    os.path.join(site_p, "tensorrt_libs", "include"),
+                    os.path.join(site_p, "tensorrt_cu12_libs", "include"),
+                    os.path.join(site_p, "tensorrt_cu13_libs", "include"),
+                    os.path.join(site_p, "tensorrt_cu11_libs", "include"),
+                    os.path.join(site_p, "tensorrt_include"),
+                ])
+
         try:
             import tensorrt
-            import sys
             trt_pkg_dir = os.path.dirname(tensorrt.__file__)
             parent_dir = os.path.dirname(trt_pkg_dir)
-            for c in [
+            search_candidates.extend([
                 os.path.join(trt_pkg_dir, "include"),
                 os.path.join(parent_dir, "tensorrt_libs", "include"),
                 os.path.join(parent_dir, "tensorrt_cu12_libs", "include"),
                 os.path.join(parent_dir, "tensorrt_cu13_libs", "include"),
-                os.path.join(parent_dir, "tensorrt_include"),
-                os.path.join(sys.prefix, "include"),
-                os.path.join(sys.prefix, "local", "include"),
-                os.path.join(cuda_home, "include"),
-                "/usr/include",
-                "/usr/local/include",
-                "/usr/include/x86_64-linux-gnu",
-                "/opt/tensorrt/include",
-                "/usr/local/tensorrt/include",
-                "/usr/include/tensorrt",
-            ]:
-                if os.path.exists(c) and c not in trt_inc_dirs:
-                    trt_inc_dirs.append(c)
+            ])
         except Exception:
             pass
 
-        header_found = False
-        for d in trt_inc_dirs:
-            if os.path.exists(os.path.join(d, "NvInferPlugin.h")) or os.path.exists(os.path.join(d, "NvInfer.h")):
-                header_found = True
-                break
+        for c in search_candidates:
+            if os.path.exists(c) and c not in trt_inc_dirs:
+                trt_inc_dirs.append(c)
 
-        if not header_found:
+        has_nvinfer = any(os.path.exists(os.path.join(d, "NvInfer.h")) for d in trt_inc_dirs)
+        has_nvinfer_plugin = any(os.path.exists(os.path.join(d, "NvInferPlugin.h")) for d in trt_inc_dirs)
+
+        if not (has_nvinfer and has_nvinfer_plugin):
+            missing = []
+            if not has_nvinfer: missing.append("NvInfer.h")
+            if not has_nvinfer_plugin: missing.append("NvInferPlugin.h")
+            missing_str = " and ".join(missing)
             raise RuntimeError(
                 "\n" + "=" * 80 + "\n"
-                "❌ TENSORRT COMPILATION ERROR: TensorRT C++ headers (NvInferPlugin.h / NvInfer.h) not found!\n\n"
-                "KernelLens requires TensorRT C++ headers to compile TensorRT plugins.\n\n"
+                f"❌ TENSORRT COMPILATION ERROR: TensorRT C++ header file(s) ({missing_str}) not found!\n\n"
+                "KernelLens requires TensorRT C++ headers (NvInfer.h & NvInferPlugin.h) to compile TensorRT plugins.\n\n"
                 "To resolve this issue:\n"
                 "1. If TensorRT C++ headers are installed on your system, specify their location via:\n"
                 "   export TENSORRT_INCLUDE_DIR=/path/to/tensorrt/include\n\n"
@@ -237,7 +260,7 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
             res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode != 0:
             print(f"[NVCC ERROR] {res.stderr}")
-            if "NvInfer" in res.stderr and "No such file or directory" in res.stderr:
+            if "No such file or directory" in res.stderr and ("NvInfer" in res.stderr or "NvInferPlugin" in res.stderr):
                 raise RuntimeError(
                     "\n" + "=" * 80 + "\n"
                     "❌ TENSORRT COMPILATION ERROR: NvInferPlugin.h or NvInfer.h header file not found during compilation!\n\n"
@@ -247,7 +270,7 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
                     "3. Or copy NvInfer.h and NvInferPlugin.h to ~/tensorrt_headers/\n"
                     + "=" * 80
                 )
-            res.check_returncode()
+            raise RuntimeError(f"❌ NVCC Compilation Failed:\n{res.stderr}")
 
 
     so_path = os.path.join(trt_plugins_dir, "libtriton_trt_plugins.so")
