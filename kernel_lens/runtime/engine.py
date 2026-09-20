@@ -179,6 +179,10 @@ class CompiledModel:
                 torch.int8: np.int8,
                 torch.uint8: np.uint8,
             }
+            if hasattr(torch, 'float8_e4m3fn'):
+                torch_to_np_dtype[torch.float8_e4m3fn] = np.uint8
+            if hasattr(torch, 'float8_e5m2'):
+                torch_to_np_dtype[torch.float8_e5m2] = np.uint8
             onnx_type = torch_to_np_dtype.get(t.dtype, np.float32)
             dev_type = 'cpu' if (t.device.type == 'cpu' or i >= len(inputs)) else 'cuda'
             io_binding.bind_input(
@@ -204,6 +208,9 @@ class CompiledModel:
             elif t.dtype == torch.int64: np_dtype = np.int64
             elif t.dtype == torch.int32: np_dtype = np.int32
             elif t.dtype == torch.int8: np_dtype = np.int8
+            elif t.dtype == torch.uint8: np_dtype = np.uint8
+            elif hasattr(torch, 'float8_e4m3fn') and t.dtype == torch.float8_e4m3fn: np_dtype = np.uint8
+            elif hasattr(torch, 'float8_e5m2') and t.dtype == torch.float8_e5m2: np_dtype = np.uint8
 
             io_binding.bind_output(
                 name=sess_out.name, device_type='cuda', device_id=0,

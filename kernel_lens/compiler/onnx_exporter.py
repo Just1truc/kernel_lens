@@ -40,12 +40,13 @@ def get_onnx_node_class(kernel_name, manifest):
     return TritonONNXNode
 
 class TritonGlobalONNXExporter:
-    def __init__(self, manifests):
+    def __init__(self, manifests, original_inputs=None):
         self.manifest_map = {}
         for m in manifests:
             if hasattr(m, 'fn') and m.fn is not None:
                 self.manifest_map[m.fn.__name__] = m
             self.manifest_map[m.kernel_name] = m
+        self.original_inputs = original_inputs
         self.patches = []
 
     def __enter__(self):
@@ -74,7 +75,15 @@ class TritonGlobalONNXExporter:
                         return int(val.item()) if val.dtype in [torch.int32, torch.int64] else float(val.item())
                     return val
                     
-                clean_args = [unwrap(a) for a in args]
+                clean_args = []
+                for idx, a in enumerate(args):
+                    val = unwrap(a)
+                    if self.original_inputs and idx < len(self.original_inputs):
+                        orig = self.original_inputs[idx]
+                        if isinstance(orig, torch.Tensor) and hasattr(torch, 'float8_e4m3fn') and orig.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+                            val = orig
+                    clean_args.append(val)
+
                 clean_kwargs = {k: unwrap(v) for k, v in kwargs.items()}
                 
                 if kernel_name in self.manifest_map:
@@ -109,15 +118,26 @@ class TritonGlobalONNXExporter:
                             dtype = torch.float32 if isinstance(val, float) else torch.int64
                             val = torch.tensor([val], dtype=dtype, device=target_device)
                         elif isinstance(val, torch.Tensor):
-                            val = val.to(device=target_device)
+                            if hasattr(torch, 'float8_e4m3fn') and val.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+                                val = val.to(device=target_device).view(torch.uint8)
+                            else:
+                                val = val.to(device=target_device)
                             
                         node_inputs.append(val)
                     
                     self.saved_args = node_inputs
                         
-                    target_outs = [bound.arguments[a.name] for a in manifest.arguments if a.kind in ('output', 'inplace')]
-                    if not target_outs:
-                        target_outs = [args[0]]
+                    raw_target_outs = [bound.arguments[a.name] for a in manifest.arguments if a.kind in ('output', 'inplace')]
+                    if not raw_target_outs:
+                        raw_target_outs = [args[0]]
+                    
+                    target_outs = []
+                    for out_t in raw_target_outs:
+                        if isinstance(out_t, torch.Tensor) and hasattr(torch, 'float8_e4m3fn') and out_t.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+                            target_outs.append(out_t.view(torch.uint8))
+                        else:
+                            target_outs.append(out_t)
+
                     ONNXNode = get_onnx_node_class(manifest.kernel_name, manifest)
                     res = ONNXNode.apply(*target_outs, *node_inputs)
                     if is_verbose():

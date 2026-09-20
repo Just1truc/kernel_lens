@@ -277,17 +277,20 @@ private:
         output_type_lines = []
         out_args = [a for a in manifest.arguments if a.kind in ('output', 'inplace')]
         for i, out_arg in enumerate(out_args):
-            if 'bool' in out_arg.dtype:
+            dtype_str = str(out_arg.dtype).lower()
+            if 'float8' in dtype_str or 'fp8' in dtype_str or 'e4m3' in dtype_str or 'e5m2' in dtype_str:
+                trt_type = "nvinfer1::DataType::kFP8"
+            elif 'bool' in dtype_str:
                 trt_type = "nvinfer1::DataType::kBOOL"
-            elif 'uint8' in out_arg.dtype or 'int8' in out_arg.dtype:
+            elif 'uint8' in dtype_str or 'int8' in dtype_str or 'int4' in dtype_str or 'uint4' in dtype_str:
                 trt_type = "nvinfer1::DataType::kINT8"
-            elif 'float16' in out_arg.dtype or 'half' in out_arg.dtype:
+            elif 'float16' in dtype_str or 'half' in dtype_str:
                 trt_type = "nvinfer1::DataType::kHALF"
-            elif 'float' in out_arg.dtype:
+            elif 'float' in dtype_str:
                 trt_type = "nvinfer1::DataType::kFLOAT"
-            elif 'int64' in out_arg.dtype or 'long' in out_arg.dtype:
+            elif 'int64' in dtype_str or 'long' in dtype_str:
                 trt_type = "nvinfer1::DataType::kINT64"
-            elif 'int' in out_arg.dtype:
+            elif 'int' in dtype_str:
                 trt_type = "nvinfer1::DataType::kINT32"
             else:
                 trt_type = "inputTypes[0]"

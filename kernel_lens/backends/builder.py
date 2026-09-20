@@ -31,15 +31,37 @@ def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
     
     # # 3. Dynamically find CUDA paths via nvcc
     # print("     [Builder] Querying system for CUDA configuration...")
+    cuda_inc = "/usr/local/cuda/include"
+    try:
+        import triton
+        t_inc = os.path.join(os.path.dirname(triton.__file__), "backends", "nvidia", "include")
+        if os.path.exists(os.path.join(t_inc, "cuda.h")):
+            cuda_inc = t_inc
+    except Exception:
+        pass
+
+    if cuda_inc == "/usr/local/cuda/include":
+        try:
+            nvcc_path = subprocess.check_output(["which", "nvcc"]).decode().strip()
+            cuda_home = os.path.dirname(os.path.dirname(nvcc_path))
+            cand = os.path.join(cuda_home, "include")
+            if os.path.exists(os.path.join(cand, "cuda.h")):
+                cuda_inc = cand
+        except Exception:
+            pass
+
+    cuda_lib = "/usr/local/cuda/lib64"
     try:
         nvcc_path = subprocess.check_output(["which", "nvcc"]).decode().strip()
         cuda_home = os.path.dirname(os.path.dirname(nvcc_path))
+        for cand in [os.path.join(cuda_home, "lib64"), os.path.join(cuda_home, "lib"), "/usr/lib/x86_64-linux-gnu", "/usr/lib64"]:
+            if os.path.exists(cand) and any(f.startswith("libcudart") for f in os.listdir(cand)):
+                cuda_lib = cand
+                break
+            elif os.path.exists(cand):
+                cuda_lib = cand
     except Exception:
-        # Fallback to standard Linux path
-        cuda_home = "/usr/local/cuda"
-        
-    cuda_inc = os.path.join(cuda_home, "include")
-    cuda_lib = os.path.join(cuda_home, "lib64")
+        pass
     # print(f"     [Builder] Detected CUDA at {cuda_home}")
     
     # 4. Compile the .cu files into object files
@@ -62,10 +84,14 @@ def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
             arch_flag = "-gencode=arch=compute_75,code=sm_75"
 
         user_trt_inc = os.path.expanduser("~/tensorrt_headers")
+        cpp_compiler = "g++-13" if os.path.exists("/usr/bin/g++-13") else "g++"
+        ccbin_flag = ["-ccbin", cpp_compiler] if os.path.exists(f"/usr/bin/{cpp_compiler}") else []
+
         cmd = [
-            "nvcc", "-c", cu_path, "-o", obj_path, "-O3", arch_flag, "-Xcompiler", "-fPIC",
-            f"-I{ort_inc}", f"-I{cuda_inc}", "-I/usr/include", "-Wno-deprecated-gpu-targets"
-        ]
+            "nvcc", "-c", cu_path, "-o", obj_path, "-O3", arch_flag, "-Xcompiler", "-fPIC", "-Xcompiler", "-D_GNU_SOURCE",
+            "-allow-unsupported-compiler",
+            f"-I{ort_inc}", "-Wno-deprecated-gpu-targets"
+        ] + ccbin_flag
 
         if os.path.exists(user_trt_inc):
             cmd.insert(-1, f"-I{user_trt_inc}")
@@ -86,7 +112,7 @@ def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
     obj_files.append(reg_obj)
     
     cmd = [
-        "g++", "-c", reg_cpp, "-o", reg_obj, "-O3", "-fPIC",
+        cpp_compiler, "-c", reg_cpp, "-o", reg_obj, "-O3", "-fPIC",
         f"-I{ort_inc}", f"-I{cuda_inc}"
     ]
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -96,7 +122,7 @@ def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
     abs_ort_lib = os.path.abspath(ort_lib)
     
     cmd = [
-        "g++", "-shared", "-o", so_path
+        cpp_compiler, "-shared", "-o", so_path
     ] + obj_files + [
         f"-L{ort_lib}", "-lonnxruntime",
         f"-L{cuda_lib}", "-lcuda", "-lcudart",
@@ -145,12 +171,15 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
         inc_flags = []
         if os.path.exists(user_trt_inc):
             inc_flags.append(f"-I{user_trt_inc}")
-        inc_flags.extend([f"-I{cuda_inc}", "-I/usr/include"])
+
+        cpp_compiler = "g++-13" if os.path.exists("/usr/bin/g++-13") else "g++"
+        ccbin_flag = ["-ccbin", cpp_compiler] if os.path.exists(f"/usr/bin/{cpp_compiler}") else []
 
         cmd = [
-            "nvcc", "-c", cu_path, "-o", obj_path, "-O3", arch_flag, "-Xcompiler", "-fPIC",
+            "nvcc", "-c", cu_path, "-o", obj_path, "-O3", arch_flag, "-Xcompiler", "-fPIC", "-Xcompiler", "-D_GNU_SOURCE",
+            "-allow-unsupported-compiler",
             "-Wno-deprecated-gpu-targets"
-        ] + inc_flags
+        ] + ccbin_flag + inc_flags
 
         res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode != 0 and "Unsupported gpu architecture" in res.stderr:

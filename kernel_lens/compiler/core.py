@@ -239,7 +239,7 @@ def _export_to_onnx(model, inputs, output_path, manifests):
     else:
         out_names = ["output_0"]
 
-    exporter = TritonGlobalONNXExporter(manifests)
+    exporter = TritonGlobalONNXExporter(manifests, original_inputs=inputs)
     with exporter:
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)
@@ -261,9 +261,19 @@ def _export_to_onnx(model, inputs, output_path, manifests):
             except Exception:
                 pass
 
+            export_inputs = []
+            for inp in inputs:
+                if isinstance(inp, torch.Tensor) and hasattr(torch, 'float8_e4m3fn') and inp.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+                    v = inp.view(torch.uint8)
+                    v._fp8_dtype = inp.dtype
+                    export_inputs.append(v)
+                else:
+                    export_inputs.append(inp)
+            export_inputs = tuple(export_inputs)
+
             torch.onnx.export(
                 model,
-                inputs,
+                export_inputs,
                 output_path,
                 **export_kwargs
             )

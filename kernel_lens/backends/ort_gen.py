@@ -20,12 +20,20 @@ class ORTGenerator:
         
         def torch_dtype_to_onnx_str(dtype_val) -> str:
             dtype_str = str(dtype_val).lower()
-            if 'bool' in dtype_str:
+            if 'float8_e4m3fn' in dtype_str or 'fp8e4m3' in dtype_str or 'e4m3' in dtype_str or 'fp8e4nv' in dtype_str:
+                return "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8"
+            elif 'float8_e5m2' in dtype_str or 'fp8e5m2' in dtype_str or 'e5m2' in dtype_str or 'fp8e5' in dtype_str:
+                return "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8"
+            elif 'bool' in dtype_str:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL"
             elif 'uint8' in dtype_str:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8"
             elif 'int8' in dtype_str:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8"
+            elif 'uint4' in dtype_str:
+                return "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4"
+            elif 'int4' in dtype_str:
+                return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4"
             elif 'int16' in dtype_str:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16"
             elif 'int32' in dtype_str:
@@ -194,7 +202,7 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
             if arg.kind == 'input':
                 arg_setup_lines.append(f"auto in_tensor_{slot_idx} = ctx.GetInput({onnx_input_counter});")
                 arg_setup_lines.append(f"static thread_local const void* arg_ptr_{slot_idx};")
-                arg_setup_lines.append(f"arg_ptr_{slot_idx} = (const void*)in_tensor_{slot_idx}.GetTensorData<float>();")
+                arg_setup_lines.append(f"arg_ptr_{slot_idx} = (const void*)in_tensor_{slot_idx}.GetTensorData<uint8_t>();")
                 onnx_input_counter += 1
             elif arg.kind == 'output':
                 out_dim_exprs = []
@@ -209,7 +217,7 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
                 arg_setup_lines.append(f"std::vector<int64_t> out_dims_{ort_output_counter} = {out_shape_str};")
                 arg_setup_lines.append(f"auto out_tensor_{slot_idx} = ctx.GetOutput({ort_output_counter}, out_dims_{ort_output_counter}.data(), out_dims_{ort_output_counter}.size());")
                 arg_setup_lines.append(f"static thread_local void* arg_ptr_{slot_idx};")
-                arg_setup_lines.append(f"arg_ptr_{slot_idx} = (void*)out_tensor_{slot_idx}.GetTensorMutableData<float>();")
+                arg_setup_lines.append(f"arg_ptr_{slot_idx} = (void*)out_tensor_{slot_idx}.GetTensorMutableData<uint8_t>();")
                 ort_output_counter += 1
             elif arg.kind == 'inplace':
                 out_dim_exprs = []
@@ -271,6 +279,7 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
 
         dynamic_args_cpp = "\n    ".join(arg_setup_lines)
         grid_cpp = "\n    ".join(grid_eval_lines)
+        sync_stmt = 'printf("[CPP DEBUG] Kernel sync complete successfully!\\n"); fflush(stdout);' if is_verbose() else '// sync complete'
 
         tpl = f'''#include "{manifest.kernel_name}Op.h"
 #include <stdexcept>
@@ -294,12 +303,54 @@ void {kernel_name}::Compute(OrtKernelContext* context) {{
     static thread_local CUfunction mKernel = nullptr;
     
     if (mModule == nullptr) {{
+        cudaFree(0);
         cuInit(0);
-        CUresult res = cuModuleLoadDataEx(&mModule, PTX_CODE, 0, nullptr, nullptr);
-        if (res != CUDA_SUCCESS) throw std::runtime_error("Failed to load PTX module");
+        std::string ptx_str(PTX_CODE);
+        CUresult res = cuModuleLoadData(&mModule, ptx_str.c_str());
+        if (res != CUDA_SUCCESS) {{
+            // Level 1 Patch: version 9.3 -> 9.0 (preserves sm_120a architecture features)
+            size_t ver_pos = ptx_str.find(".version");
+            if (ver_pos != std::string::npos) {{
+                size_t nl = ptx_str.find('\\n', ver_pos);
+                if (nl != std::string::npos) ptx_str.replace(ver_pos, nl - ver_pos, ".version 9.0");
+            }}
+            res = cuModuleLoadData(&mModule, ptx_str.c_str());
+        }}
+        if (res != CUDA_SUCCESS) {{
+            // Level 2 Patch: version -> 8.0 and target -> sm_90
+            size_t ver_pos = ptx_str.find(".version");
+            if (ver_pos != std::string::npos) {{
+                size_t nl = ptx_str.find('\\n', ver_pos);
+                if (nl != std::string::npos) ptx_str.replace(ver_pos, nl - ver_pos, ".version 8.0");
+            }}
+            size_t tgt_pos = ptx_str.find(".target");
+            if (tgt_pos != std::string::npos) {{
+                size_t nl = ptx_str.find('\\n', tgt_pos);
+                if (nl != std::string::npos) ptx_str.replace(tgt_pos, nl - tgt_pos, ".target sm_90");
+            }}
+            res = cuModuleLoadData(&mModule, ptx_str.c_str());
+        }}
+        if (res != CUDA_SUCCESS) {{
+            // Level 3 Patch: target -> sm_80
+            size_t tgt_pos = ptx_str.find(".target");
+            if (tgt_pos != std::string::npos) {{
+                size_t nl = ptx_str.find('\\n', tgt_pos);
+                if (nl != std::string::npos) ptx_str.replace(tgt_pos, nl - tgt_pos, ".target sm_80");
+            }}
+            res = cuModuleLoadData(&mModule, ptx_str.c_str());
+        }}
+        if (res != CUDA_SUCCESS) {{
+            printf("[CPP ERROR] cuModuleLoadData failed code %d\\n", (int)res); fflush(stdout);
+            throw std::runtime_error("Failed to load PTX module");
+        }}
         res = cuModuleGetFunction(&mKernel, mModule, "{ptx_entry_name}");
-        if (res != CUDA_SUCCESS) throw std::runtime_error("Failed to extract function");
-        cuFuncSetAttribute(mKernel, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, {manifest.shared_memory_bytes});
+        if (res != CUDA_SUCCESS) {{
+            printf("[CPP ERROR] cuModuleGetFunction failed for entry '{ptx_entry_name}' with code %d\\n", (int)res); fflush(stdout);
+            throw std::runtime_error("Failed to extract function");
+        }}
+        if ({manifest.shared_memory_bytes} > 49152) {{
+            cuFuncSetAttribute(mKernel, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, {manifest.shared_memory_bytes});
+        }}
     }}
 
     cudaStream_t stream = reinterpret_cast<cudaStream_t>(ctx.GetGPUComputeStream());
@@ -314,7 +365,7 @@ void {kernel_name}::Compute(OrtKernelContext* context) {{
     }}
 
     cudaStreamSynchronize(stream);
-    {"printf(\"[CPP DEBUG] Kernel sync complete successfully!\\\\n\"); fflush(stdout);" if is_verbose() else ""}
+    {sync_stmt}
 }}
 
 }} // namespace custom
