@@ -175,7 +175,9 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
             trt_inc_dirs.append(user_trt_inc)
 
         import sys
+        pkg_inc = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "include", "tensorrt"))
         search_candidates = [
+            pkg_inc,
             os.path.join(sys.prefix, "include"),
             os.path.join(sys.prefix, "local", "include"),
             os.path.join(cuda_home, "include"),
