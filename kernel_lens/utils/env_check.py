@@ -9,10 +9,32 @@ def check_environment(backends: list[str]):
     """
     # 1. Base C++ Compilation Requirements
     if not shutil.which("nvcc"):
-        raise EnvironmentError(
-            "❌ 'nvcc' not found. The CUDA toolkit must be installed and in your PATH to compile Triton PTX."
-        )
-    if not shutil.which("g++"):
+        cuda_paths = [
+            "/usr/local/cuda/bin/nvcc",
+            "/usr/local/cuda-12/bin/nvcc",
+            "/usr/local/cuda-12.4/bin/nvcc",
+            "/usr/local/cuda-12.2/bin/nvcc",
+            "/usr/local/cuda-12.1/bin/nvcc",
+            "/usr/local/cuda-11/bin/nvcc",
+            "/usr/bin/nvcc",
+        ]
+        if os.environ.get("CUDA_HOME"):
+            cuda_paths.insert(0, os.path.join(os.environ["CUDA_HOME"], "bin", "nvcc"))
+        
+        found_nvcc = None
+        for p in cuda_paths:
+            if os.path.exists(p):
+                found_nvcc = p
+                nvcc_dir = os.path.dirname(p)
+                os.environ["PATH"] = f"{nvcc_dir}:{os.environ.get('PATH', '')}"
+                break
+        
+        if not found_nvcc:
+            raise EnvironmentError(
+                "❌ 'nvcc' not found. The CUDA toolkit must be installed and in your PATH to compile Triton PTX."
+            )
+
+    if not shutil.which("g++") and not os.path.exists("/usr/bin/g++"):
         raise EnvironmentError(
             "❌ 'g++' not found. A C++ compiler is required to link the shared libraries."
         )
