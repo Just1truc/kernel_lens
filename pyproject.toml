@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kernel-lens"
-version = "1.1.4"
+version = "1.1.5"
 description = "A production-grade, multi-backend compiler for Triton kernels (ONNX & TensorRT)"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -24,13 +24,14 @@ dependencies = [
     "torch>=2.1.0",
     "triton>=2.1.0",
     "onnx>=1.15.0",
+    "tensorrt-cu12-libs; platform_system == 'Linux'",
 ]
 
 # Optional bracket dependencies for the inference engines
 [project.optional-dependencies]
 ort = ["onnxruntime-gpu>=1.17.0"]
-trt = ["tensorrt>=8.6.0"]
-all = ["onnxruntime-gpu>=1.17.0", "tensorrt>=8.6.0"]
+trt = ["tensorrt>=8.6.0", "tensorrt-cu12-libs"]
+all = ["onnxruntime-gpu>=1.17.0", "tensorrt>=8.6.0", "tensorrt-cu12-libs"]
 
 [project.urls]
 "Source Code" = "https://github.com/Just1truc/kernel_lens"
