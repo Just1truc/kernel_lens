@@ -2,6 +2,7 @@
 \usepackage[utf8]{inputenc}
 \usepackage{amsmath,amssymb,amsfonts,amsthm}
 \usepackage{geometry}
+\usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{listings}
 \usepackage{xcolor}
@@ -65,8 +66,8 @@
   \end{center}%
 }
 
-\title{\Huge \textbf{KernelLens: Automated Production Plugin Synthesis, Dynamic Dual-Pass Tracing, and Hardware Alignment Guards for OpenAI Triton Kernels in Enterprise C++ Inference Engines} \\[0.5em]
-\large \textit{A Technical Architecture, 12-Step Compiler Formalization, and Empirical Verification on SOTA LLM Operators}}
+\title{\Huge \textbf{KernelLens v1.1.9: Automated Production Plugin Synthesis, Dynamic Dual-Pass Tracing, and Hardware Alignment Guards for OpenAI Triton Kernels in Enterprise C++ Inference Engines} \\[0.5em]
+\large \textit{A Technical Architecture, 12-Step Compiler Formalization, TensorRT 10.16 Integration, and Empirical Verification on Blackwell SOTA LLM Operators}}
 
 \author{
     \textbf{Antigravity AI Engineering Team} \\
@@ -80,11 +81,11 @@
 \maketitle
 
 \begin{abstract}
-Writing custom high-performance GPU kernels using OpenAI Triton has become the dominant paradigm for authoring state-of-the-art deep learning operators. However, deploying models containing custom Python \texttt{@triton.jit} kernels into production enterprise C++ inference runtimes---specifically Microsoft ONNX Runtime (ORT) and NVIDIA TensorRT (TRT)---presents severe architectural barriers. Standard ONNX graph export mechanisms cannot trace imperative Python Triton calls, dynamic launch grid functions, implicit layout semantics, in-place memory mutability, dynamic runtime host scalars, or low-level PTX entry parameter signatures.
+Writing custom high-performance GPU kernels using OpenAI Triton has become the dominant paradigm for authoring state-of-the-art deep learning operators. However, deploying models containing custom Python \texttt{@triton.jit} kernels into production enterprise C++ inference runtimes---specifically Microsoft ONNX Runtime (ORT) and NVIDIA TensorRT (TRT) 10.x---presents severe architectural barriers. Standard ONNX graph export mechanisms cannot trace imperative Python Triton calls, dynamic launch grid functions, implicit layout semantics, in-place memory mutability, dynamic runtime host scalars, or low-level PTX entry parameter signatures.
 
-In this paper, we present \textbf{KernelLens}, an end-to-end automated compilation, C++/CUDA code synthesis, and zero-copy runtime framework. KernelLens bridges arbitrary PyTorch models containing custom Triton kernels directly to high-throughput ONNX Runtime and TensorRT custom C++ plugins with zero manual C++ development. We present an exhaustive 12-step technical formalization of KernelLens's core compiler pipeline: (1)~User Model \& Kernel Signature Inspection; (2)~Target Engine Configuration; (3)~Pass 1 Concrete Eager GPU Execution \& PTX Artifact Interception; (4)~Pass 2 Symbolic FX Proxy Tracing \& SymPy Grid Expression Extraction; (5)~Static AST Inspection of Main \& Recursive Nested Helper Functions; (6)~Manifest Validation; (7)~Base ONNX Export \& Domain Custom Node Injection (\texttt{triton\_custom::<name>}); (8)~Host-Side Dynamic Scalar Binding (\texttt{OrtMemTypeCPUInput}); (9)~Automated C++/CUDA Code Generation (\texttt{ort\_gen.py}, \texttt{trt\_gen.py}); (10)~16-Byte Hardware Memory Alignment Guard Insertion ($\text{Address} \pmod{16} == 0$); (11)~Native \texttt{nvcc}/\texttt{g++} Shared Library Compilation (\texttt{.so}); and (12)~Dynamic Plugin Registration with Zero-Copy VRAM IO Binding.
+In this paper, we present \textbf{KernelLens v1.1.9}, an end-to-end automated compilation, C++/CUDA code synthesis, and zero-copy runtime framework. KernelLens bridges arbitrary PyTorch models containing custom Triton kernels directly to high-throughput ONNX Runtime and TensorRT custom C++ plugins with zero manual C++ development. We present an exhaustive 12-step technical formalization of KernelLens's core compiler pipeline: (1)~User Model \& Kernel Signature Inspection; (2)~Target Engine Configuration; (3)~Pass 1 Concrete Eager GPU Execution \& PTX Artifact Interception; (4)~Pass 2 Symbolic FX Proxy Tracing \& SymPy Grid Expression Extraction; (5)~Static AST Inspection of Main \& Recursive Nested Helper Functions; (6)~Manifest Validation; (7)~Base ONNX Export \& Domain Custom Node Injection (\texttt{triton\_custom::<name>}); (8)~Host-Side Dynamic Scalar Binding (\texttt{OrtMemTypeCPUInput}); (9)~Automated C++/CUDA Code Generation (\texttt{ort\_gen.py}, \texttt{trt\_gen.py}); (10)~16-Byte Hardware Memory Alignment Guard Insertion ($\text{Address} \pmod{16} == 0$); (11)~Native \texttt{nvcc}/\texttt{g++} Shared Library Compilation (\texttt{.so}); and (12)~Dynamic Plugin Registration with Zero-Copy VRAM IO Binding.
 
-We evaluate KernelLens across state-of-the-art research model kernels from \textbf{LLaMA 3}, \textbf{Mistral}, \textbf{Qwen 2.5}, \textbf{PaLM}, and \textbf{Liger-Kernel} (Fused RMSNorm, SwiGLU, Rotary Position Embeddings, and Fused Cross-Entropy Loss). KernelLens achieves **exact floating-point numerical parity** ($\text{MaxDiff} = 0.00\text{e}+00$) against eager Triton execution while enabling production-grade C++ inference deployment.
+We detail key architectural innovations in v1.1.9, including: (a)~TensorRT 10.16 C++ plugin dynamic creators with explicit symbol registration (\texttt{register\_triton\_plugins\_explicit}) enforcing \texttt{kLINEAR} tensor formats; (b)~Automated Blackwell (\texttt{sm\_120a}) PTX 9.0 ISA version clamping (\texttt{.version 9.3} $\rightarrow$ \texttt{.version 9.0}) to satisfy CUDA 13.0 driver JIT requirements; (c)~Primary CUDA context retention (\texttt{cuDevicePrimaryCtxRetain}) to prevent multi-threaded context detachment; and (d)~Executable stack security clearance (\texttt{patchelf}) for Linux 7.0 kernels. We evaluate KernelLens across state-of-the-art research model kernels from \textbf{LLaMA 3}, \textbf{Mistral}, \textbf{Qwen 2.5}, \textbf{PaLM}, and \textbf{Liger-Kernel} (Fused RMSNorm, SwiGLU, Rotary Position Embeddings, and Fused Cross-Entropy Loss). KernelLens achieves \textbf{exact floating-point numerical parity} ($\text{MaxDiff} = 0.00\text{e}+00$) against eager Triton execution while enabling production-grade C++ inference deployment.
 \end{abstract}
 
 \tableofcontents
@@ -257,21 +258,28 @@ Dynamic runtime scalar parameters (e.g., float scaling factor $\alpha$) are pass
 \end{equation}
 
 \subsubsection{Step 9: Automated C++/CUDA Code Generation (\texttt{ort\_gen.py}, \texttt{trt\_gen.py})}
-KernelLens generates full C++ and CUDA source code for ONNX Runtime and TensorRT custom plugins:
+KernelLens generates full C++ and CUDA source code for ONNX Runtime (\texttt{ort\_gen.py}) and TensorRT (\texttt{trt\_gen.py}) custom plugins:
 \begin{itemize}
     \item \textbf{High-Rank Dynamic Grid Symbol Transpilation:} SymPy symbolic grid expressions are transpiled into C++ evaluation logic using regex pattern matching ($s_0 \rightarrow \text{shapes}[0]$). High-rank 4D dynamic tensor shapes ($s_3, s_4, \dots$) are fully supported.
     \item \textbf{Explicit PTX Parameter Signature Matching:} The Triton compiler may re-order parameters or omit unused arguments. KernelLens parses the PTX header (\texttt{.entry <kernel> (.param .u64 p0, ...)}) and builds a parameter mapping table, ensuring exact 32-bit and 64-bit scalar alignment during \texttt{cuLaunchKernel} invocations.
-    \item \textbf{Multi-Output Allocation Descriptors:} Generates C++ allocation logic for kernels returning multiple output tensors.
+    \item \textbf{TensorRT 10.16 Plugin Generator (\texttt{trt\_gen.py}):} In TensorRT 10.x, legacy static plugin interfaces are deprecated in favor of dynamic extension classes (\texttt{nvinfer1::IPluginV2DynamicExt}). KernelLens synthesizes plugin class creators and registers explicit aliases (\texttt{register\_triton\_plugins\_explicit}) to ensure seamless plugin deserialization across C++ runtimes.
+    \item \textbf{Tensor Format Combination Enforcement (\texttt{kLINEAR}):} KernelLens overrides \texttt{supportsFormatCombination} to enforce \texttt{inOut[pos].format == nvinfer1::TensorFormat::kLINEAR}, eliminating TensorRT Error Code 9 (\texttt{could not find any supported formats}) during engine optimization.
 \end{itemize}
 
 \subsubsection{Step 10: 16-Byte Hardware Memory Alignment Guard Insertion (\texttt{builder.py})}
 KernelLens embeds automated alignment guards directly into generated C++ plugins. If an input or output tensor VRAM buffer is misaligned ($\text{Address} \pmod{16} \neq 0$), a temporary 16-byte aligned GPU staging buffer is allocated dynamically via \texttt{cudaMallocAsync}, preventing hardware misaligned address exceptions (\texttt{CUDA error 716}).
 
-\subsubsection{Step 11: Native C++ Shared Library Compilation (\texttt{builder.py})}
-KernelLens automatically acquires ONNX Runtime headers (\texttt{onnxruntime-linux-x64-gpu-1.20.1}) once into a central shared cache. It queries PyTorch for CUDA compute capability (\texttt{sm\_80}, \texttt{sm\_89}, \texttt{sm\_90}), compiles \texttt{.cu} files using \texttt{nvcc -O3 -Xcompiler -fPIC}, compiles \texttt{register\_ops.cpp} using \texttt{g++ -O3 -fPIC}, and links object files into a shared library (\texttt{libtriton\_ort\_plugins.so}) with embedded RPATH (\texttt{-Wl,-rpath}).
+\subsubsection{Step 11: Native C++ Shared Library Compilation \& PTX ISA Clamping (\texttt{builder.py})}
+KernelLens builds high-performance shared libraries (\texttt{.so}) through automated compilation steps:
+\begin{itemize}
+    \item \textbf{Blackwell (\texttt{sm\_120a}) PTX 9.0 Version Clamping:} When compiling for NVIDIA Blackwell GPUs (\texttt{sm\_120a}) under Triton 3.x, the compiler emits PTX ISA version 9.3 (\texttt{.version 9.3}). Because CUDA Driver 13.0 JIT parsers accept PTX version directives up to \texttt{.version 9.0}, KernelLens automatically transforms PTX string headers to \texttt{.version 9.0} while preserving native \texttt{.target sm\_120a} hardware instructions, resolving \texttt{CUDA\_ERROR\_UNSUPPORTED\_PTX\_VERSION} (Error 222).
+    \item \textbf{Primary CUDA Context Retention:} C++ plugin \texttt{initialize()} calls invoke \texttt{cuDevicePrimaryCtxRetain} and \texttt{cuCtxSetCurrent}, preventing CUDA context detachment (\texttt{CUDA\_ERROR\_INVALID\_CONTEXT} Error 201) when executed across multi-threaded C++ runtime streams.
+    \item \textbf{Executable Stack Security Clearance (\texttt{patchelf}):} On modern Linux 7.0 kernels with strict SELinux stack permissions, dynamic library loading can fail if executable stacks are flagged. KernelLens automatically executes \texttt{patchelf --clear-execstack} on compiled \texttt{.so} artifacts before runtime loading.
+    \item \textbf{Header \& Toolchain Auto-Discovery:} KernelLens locates TensorRT C++ headers (\texttt{NvInfer.h}, \texttt{NvInferPlugin.h}) from active Python virtual environments, system paths, or fallback headers included in \texttt{kernel\_lens/include/tensorrt}.
+\end{itemize}
 
 \subsubsection{Step 12: Dynamic Plugin Registration \& Zero-Copy Runtime Execution (\texttt{engine.py})}
-KernelLens dynamically loads \texttt{.so} libraries via \texttt{ctypes.CDLL}, registers plugin schemas with ONNX Runtime and TensorRT, and creates a \texttt{CompiledModel} instance exposing a unified \texttt{.run(inputs, backend="onnx")} interface. Using ONNX Runtime \texttt{IOBinding} and TensorRT \texttt{set\_tensor\_address}, PyTorch GPU memory pointers are bound directly to execution contexts, achieving $O(1)$ zero-copy overhead and exact numerical parity ($\text{MaxDiff} = 0.00\text{e}+00$).
+KernelLens dynamically loads \texttt{.so} libraries via \texttt{ctypes.CDLL}, registers plugin schemas with ONNX Runtime and TensorRT, and creates a \texttt{CompiledModel} instance exposing a unified \texttt{.run(inputs, backend="onnx")} interface. Using ONNX Runtime \texttt{IOBinding} and TensorRT \texttt{set\_tensor\_address}, PyTorch GPU memory pointers are bound directly to execution contexts, achieving $O(1)$ zero-copy overhead and exact numerical parity ($\text{MaxDiff} = 0.00\text{e}+00$). Dynamic INT8 range initialization (\texttt{set\_dynamic\_range}) is strictly scoped to \texttt{Int8} tensors, preventing deprecation warnings and explicit quantization conflicts in TensorRT 10.16.
 
 ---
 
@@ -441,6 +449,7 @@ We measure the maximum absolute floating-point discrepancy ($\text{MaxDiff}$) be
 \begin{table}[h!]
 \centering
 \small
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lcccc}
 \toprule
 \textbf{Research Kernel / Operator} & \textbf{Tensor Shape} & \textbf{Triton vs Ref PyTorch} & \textbf{KernelLens ORT MaxDiff} & \textbf{Status} \\ \midrule
@@ -453,7 +462,8 @@ Dynamic Runtime Scalars ($\alpha$) & $(128,)$ & $0.00 \times 10^{0}$ & $\mathbf{
 4D High-Rank Launch Grid & $(2, 16, 8, 8)$ & $0.00 \times 10^{0}$ & $\mathbf{0.000000\mathbf{e}+00}$ & \textbf{PASSED} \\
 In-Place Tensor Addition & $(1024,)$ & $0.00 \times 10^{0}$ & $\mathbf{0.000000\mathbf{e}+00}$ & \textbf{PASSED} \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \caption{Numerical parity evaluation across state-of-the-art research model kernels and architectural edge cases.}
 \label{tab:research_results}
 \end{table}
@@ -467,6 +477,7 @@ Execution latencies were measured empirically on GPU using high-precision CUDA t
 \begin{table}[h!]
 \centering
 \small
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lccccc}
 \toprule
 \textbf{Research Kernel / Workload} & \textbf{PyTorch Eager} & \textbf{torch.compile} & \textbf{Native Triton} & \textbf{KernelLens TRT} & \textbf{KernelLens ORT} \\ \midrule
@@ -478,7 +489,8 @@ LLaMA 3 RMSNorm ($D=4096$) & $24.12 \text{ ms}$ & $6.97 \text{ ms}$ & $7.03 \tex
 PaLM SwiGLU Activation & $0.05 \text{ ms}$ & $0.20 \text{ ms}$ & $0.11 \text{ ms}$ & $\mathbf{0.18 \text{ ms}}$ & $\mathbf{0.42 \text{ ms}}$ \\
 Qwen 2.5 RoPE Embedding & $8.01 \text{ ms}$ & $1.77 \text{ ms}$ & $1.90 \text{ ms}$ & $\mathbf{1.98 \text{ ms}}$ & $\mathbf{2.04 \text{ ms}}$ \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \caption{Empirical execution latencies (ms) measured directly on NVIDIA GPU across execution backends.}
 \label{tab:empirical_latencies}
 \end{table}
@@ -498,13 +510,15 @@ We evaluate two quantized workloads on the RTX 5060 Ti:
 \begin{table}[h!]
 \centering
 \small
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lccccc}
 \toprule
 \textbf{Quantized Kernel / Workload} & \textbf{Data Type} & \textbf{PyTorch Eager FP16} & \textbf{Native Triton} & \textbf{KernelLens ORT C++} & \textbf{Speedup vs FP16} \\ \midrule
 FP8 Scaled GEMM ($4096 \times 4096$) & \texttt{fp8\_e4m3fn} & $2.79 \text{ ms}$ & $2.05 \text{ ms}$ & $\mathbf{2.08 \text{ ms}}$ & $\mathbf{1.34\times}$ \\
 INT4 W4A16 GEMM ($2048 \times 4096$) & \texttt{int4 / uint8} & $1.39 \text{ ms}$ & $3.57 \text{ ms}$ & $\mathbf{3.63 \text{ ms}}$ & $0.38\times$ (VRAM $2\times$ compressed) \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \caption{Empirical execution latencies (ms) and numerical accuracy measured on NVIDIA GeForce RTX 5060 Ti GPU.}
 \label{tab:rtx5060ti_quantization}
 \end{table}
