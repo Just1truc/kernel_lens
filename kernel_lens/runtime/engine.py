@@ -271,6 +271,22 @@ class CompiledModel:
                 if hasattr(config, "set_memory_pool_limit"):
                     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30)
                 
+                profile = builder.create_optimization_profile()
+                has_dynamic = False
+                for i in range(network.num_inputs):
+                    t = network.get_input(i)
+                    shape = tuple(t.shape)
+                    if any(s is None or s < 0 for s in shape):
+                        has_dynamic = True
+                        actual_shape = tuple(inputs[i].shape) if (inputs and i < len(inputs) and hasattr(inputs[i], 'shape')) else shape
+                        min_s = tuple(1 if (s is None or s < 0) else s for s in shape)
+                        opt_s = tuple(actual_shape[j] if (s is None or s < 0) else s for j, s in enumerate(shape))
+                        max_s = tuple(max(8192, (actual_shape[j] if j < len(actual_shape) else 1) * 4) if (s is None or s < 0) else s for j, s in enumerate(shape))
+                        profile.set_shape(t.name, min_s, opt_s, max_s)
+
+                if has_dynamic:
+                    config.add_optimization_profile(profile)
+
                 # Set dynamic range for any INT8 tensors in the network
                 for i in range(network.num_inputs):
                     t = network.get_input(i)
