@@ -7,10 +7,13 @@ from .config import set_verbose, is_verbose
 
 
 
+__version__ = "1.1.1"
+
 __all__ = [
     "compile",
     "load",
     "extract_libs",
     "set_verbose",
     "is_verbose",
+    "__version__",
 ]

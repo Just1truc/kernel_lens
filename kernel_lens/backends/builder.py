@@ -167,10 +167,33 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
         except Exception:
             arch_flag = "-gencode=arch=compute_75,code=sm_75"
 
+        trt_inc_dirs = []
+        if os.environ.get("TENSORRT_INCLUDE_DIR"):
+            trt_inc_dirs.append(os.environ["TENSORRT_INCLUDE_DIR"])
         user_trt_inc = os.path.expanduser("~/tensorrt_headers")
-        inc_flags = []
         if os.path.exists(user_trt_inc):
-            inc_flags.append(f"-I{user_trt_inc}")
+            trt_inc_dirs.append(user_trt_inc)
+        try:
+            import tensorrt
+            import sys
+            trt_pkg_dir = os.path.dirname(tensorrt.__file__)
+            parent_dir = os.path.dirname(trt_pkg_dir)
+            for c in [
+                os.path.join(trt_pkg_dir, "include"),
+                os.path.join(parent_dir, "tensorrt_libs", "include"),
+                os.path.join(parent_dir, "tensorrt_cu12_libs", "include"),
+                os.path.join(parent_dir, "tensorrt_cu13_libs", "include"),
+                os.path.join(sys.prefix, "include"),
+                "/usr/include",
+                "/usr/local/include",
+                "/usr/include/x86_64-linux-gnu",
+            ]:
+                if os.path.exists(c) and c not in trt_inc_dirs:
+                    trt_inc_dirs.append(c)
+        except Exception:
+            pass
+
+        inc_flags = [f"-I{d}" for d in trt_inc_dirs]
 
         cpp_compiler = "g++-13" if os.path.exists("/usr/bin/g++-13") else "g++"
         ccbin_flag = ["-ccbin", cpp_compiler] if os.path.exists(f"/usr/bin/{cpp_compiler}") else []
@@ -187,6 +210,8 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
             res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode != 0:
             print(f"[NVCC ERROR] {res.stderr}")
+            if "NvInfer" in res.stderr and "No such file or directory" in res.stderr:
+                raise RuntimeError("TensorRT compilation failed: NvInferPlugin.h or NvInfer.h header not found. Please install TensorRT headers or set TENSORRT_INCLUDE_DIR environment variable.")
             res.check_returncode()
 
 

@@ -133,12 +133,42 @@ def main():
     triton_lat = benchmark_fn(model, (logits, targets))
     print(f"  -> Native Triton (Python):    {triton_lat:.4f} ms")
 
-    # 4. Kernel Lens -> TensorRT Plugin Engine
-    print("\n[4/5] Compiling & Benchmarking Kernel Lens (TensorRT Plugin)...")
-    kl_trt = kl.compile(model, (logits, targets), backends=["tensorrt"], name="FusedCE_TRT")
-    trt_lat = benchmark_fn(lambda: kl_trt.run((logits, targets), backend="tensorrt"), ())
-    trt_out = kl_trt.run((logits, targets), backend="tensorrt")
-    print(f"  -> Kernel Lens (TensorRT):    {trt_lat:.4f} ms")
+    def is_trt_available():
+        try:
+            import tensorrt
+            import os, sys
+            trt_inc_dirs = []
+            if os.environ.get("TENSORRT_INCLUDE_DIR"):
+                trt_inc_dirs.append(os.environ["TENSORRT_INCLUDE_DIR"])
+            user_trt_inc = os.path.expanduser("~/tensorrt_headers")
+            if os.path.exists(user_trt_inc):
+                trt_inc_dirs.append(user_trt_inc)
+            trt_pkg_dir = os.path.dirname(tensorrt.__file__)
+            parent_dir = os.path.dirname(trt_pkg_dir)
+            for c in [
+                os.path.join(trt_pkg_dir, "include"),
+                os.path.join(parent_dir, "tensorrt_libs", "include"),
+                os.path.join(sys.prefix, "include"),
+                "/usr/include",
+                "/usr/local/include",
+            ]:
+                if os.path.exists(c) and c not in trt_inc_dirs:
+                    trt_inc_dirs.append(c)
+            for d in trt_inc_dirs:
+                if os.path.exists(os.path.join(d, "NvInferPlugin.h")) or os.path.exists(os.path.join(d, "NvInfer.h")):
+                    return True
+            return False
+        except Exception:
+            return False
+
+    trt_out = None
+    trt_lat = 0.0
+    if is_trt_available():
+        print("\n[4/5] Compiling & Benchmarking Kernel Lens (TensorRT Plugin)...")
+        kl_trt = kl.compile(model, (logits, targets), backends=["tensorrt"], name="FusedCE_TRT")
+        trt_lat = benchmark_fn(lambda: kl_trt.run((logits, targets), backend="tensorrt"), ())
+        trt_out = kl_trt.run((logits, targets), backend="tensorrt")
+        print(f"  -> Kernel Lens (TensorRT):    {trt_lat:.4f} ms")
 
     # 5. Kernel Lens -> ONNX Runtime Plugin Engine
     print("\n[5/5] Compiling & Benchmarking Kernel Lens (ONNX Runtime Plugin)...")
@@ -149,20 +179,29 @@ def main():
 
     # Accuracy Verification
     py_out = native_cross_entropy(logits, targets)
-    diff_trt = torch.abs(py_out - trt_out).max().item()
     diff_ort = torch.abs(py_out - ort_out).max().item()
+    diff_trt = torch.abs(py_out - trt_out).max().item() if trt_out is not None else 0.0
 
     print("\n" + "=" * 80)
     print("🏆 FINAL PERFORMANCE SUMMARY & SPEEDUPS")
     print("=" * 80)
-    print(f"  ⚡ Kernel Lens (TRT) vs torch.compile:  {(tc_lat / trt_lat):.2f}x SPEEDUP")
-    print(f"  ⚡ Kernel Lens (TRT) vs PyTorch Eager:  {(eager_lat / trt_lat):.2f}x SPEEDUP")
+    if trt_lat > 0:
+        print(f"  ⚡ Kernel Lens (TRT) vs torch.compile:  {(tc_lat / trt_lat):.2f}x SPEEDUP")
+        print(f"  ⚡ Kernel Lens (TRT) vs PyTorch Eager:  {(eager_lat / trt_lat):.2f}x SPEEDUP")
     print(f"  ⚡ Kernel Lens (ORT) vs torch.compile:  {(tc_lat / ort_lat):.2f}x SPEEDUP")
     print("-" * 80)
     print("🎯 NUMERICAL ACCURACY VERIFICATION")
-    print(f"  -> TRT Output Max Diff:  {diff_trt:.6e}  ({'✅ PASSED' if diff_trt < 1e-4 else '❌ FAILED'})")
+    if trt_out is not None:
+        print(f"  -> TRT Output Max Diff:  {diff_trt:.6e}  ({'✅ PASSED' if diff_trt < 1e-4 else '❌ FAILED'})")
     print(f"  -> ORT Output Max Diff:  {diff_ort:.6e}  ({'✅ PASSED' if diff_ort < 1e-4 else '❌ FAILED'})")
     print("=" * 80)
+
+
+import pytest
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA GPU required for fused cross entropy test")
+def test_fused_cross_entropy():
+    main()
 
 
 if __name__ == "__main__":

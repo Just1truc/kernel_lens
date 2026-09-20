@@ -111,5 +111,12 @@ def main():
     print("=" * 80)
 
 
+import pytest
+
+@pytest.mark.skipif(not torch.cuda.is_available() or not hasattr(torch, "float8_e4m3fn"), reason="CUDA GPU and float8_e4m3fn support required for FP8 test")
+def test_fp8_gemm():
+    main()
+
+
 if __name__ == "__main__":
     main()

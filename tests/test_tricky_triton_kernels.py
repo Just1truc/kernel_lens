@@ -177,5 +177,45 @@ def run_precision_tests():
     print("      ALL KERNEL-LENS PRECISION TESTS PASSED WITH 100% SUCCESS!      ")
     print("=====================================================================\n")
 
-if __name__ == "__main__":
+import pytest
+import os
+import sys
+
+def is_trt_available():
+    if not torch.cuda.is_available():
+        return False
+    try:
+        import tensorrt
+        trt_inc_dirs = []
+        if os.environ.get("TENSORRT_INCLUDE_DIR"):
+            trt_inc_dirs.append(os.environ["TENSORRT_INCLUDE_DIR"])
+        user_trt_inc = os.path.expanduser("~/tensorrt_headers")
+        if os.path.exists(user_trt_inc):
+            trt_inc_dirs.append(user_trt_inc)
+        trt_pkg_dir = os.path.dirname(tensorrt.__file__)
+        parent_dir = os.path.dirname(trt_pkg_dir)
+        for c in [
+            os.path.join(trt_pkg_dir, "include"),
+            os.path.join(parent_dir, "tensorrt_libs", "include"),
+            os.path.join(sys.prefix, "include"),
+            "/usr/include",
+            "/usr/local/include",
+        ]:
+            if os.path.exists(c) and c not in trt_inc_dirs:
+                trt_inc_dirs.append(c)
+        for d in trt_inc_dirs:
+            if os.path.exists(os.path.join(d, "NvInferPlugin.h")) or os.path.exists(os.path.join(d, "NvInfer.h")):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not is_trt_available(), reason="TensorRT and NvInferPlugin.h headers required for tricky triton kernel TRT test")
+def test_tricky_triton_kernels():
     run_precision_tests()
+
+
+if __name__ == "__main__":
+    if is_trt_available():
+        run_precision_tests()

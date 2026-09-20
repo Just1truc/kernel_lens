@@ -117,5 +117,12 @@ def main():
     print("=" * 80)
 
 
+import pytest
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA GPU required for INT4 test")
+def test_int4_dequant_gemm():
+    main()
+
+
 if __name__ == "__main__":
     main()
