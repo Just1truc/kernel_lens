@@ -279,7 +279,7 @@ def run_ultimate_benchmark_suite():
     # ======================================================================
     # TEST 2: Fused NHWC Sequential Conv (The "VRAM Reuse" King)
     # ======================================================================
-    print(f"\n{'='*80}\n🧪 BATTLE: NHWC Sequential Conv (Register Reuse)\n{'='*80}")
+    print(f"\n{'='*80}\nBATTLE: NHWC Sequential Conv (Register Reuse)\n{'='*80}")
     C, H, W = 128, 64, 64
     x_nhwc = torch.randn(1, C, H, W, device=device).contiguous(memory_format=torch.channels_last)
     model = TritonNHWCSequentialDecoder(C).to(device)
@@ -309,7 +309,7 @@ def run_ultimate_benchmark_suite():
             if not torch.allclose(p, t_tensor, atol=1e-3, rtol=1e-3):
                 is_stable = False
         
-        status = "✅ PASSED" if is_stable else "❌ FAILED"
+        status = "PASSED" if is_stable else "FAILED"
         print(f"  -> Stability ({backend_name}): {status} (Max Err: {max_err:.6e})")
         return is_stable
 

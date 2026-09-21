@@ -1,5 +1,8 @@
+import pytest
 import torch
 import kernel_lens as kl
+
+pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA GPU required")
 
 def test_tensorrt():
     from tests.final import TritonNHWCSequentialDecoder

@@ -197,8 +197,6 @@ class TritonSymIntTracingContext:
 
 
 def extract_manifests(module: torch.nn.Module, dummy_inputs: Tuple[Any, ...]) -> List[KernelManifest]:
-    global _CAPTURED_MANIFESTS
-    
     # PASS 1: Real Execution
     with TritonSymIntTracingContext():
         module(*dummy_inputs)

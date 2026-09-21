@@ -1,7 +1,10 @@
+import pytest
 import torch
 import triton
 import triton.language as tl
 import kernel_lens as kl
+
+pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA GPU required")
 
 @triton.jit
 def inplace_add_kernel(x_ptr, n_elements, BLOCK_SIZE: tl.constexpr):

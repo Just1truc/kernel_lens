@@ -1,8 +1,11 @@
+import os
+import pytest
 import torch
 import triton
 import triton.language as tl
 import kernel_lens as kl
-import os
+
+pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA GPU required")
 
 # --- Test Case 1: Nested Helper Function Store ---
 @triton.jit

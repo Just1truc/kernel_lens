@@ -104,11 +104,14 @@ def validate_manifests(manifests):
 
             if hasattr(arg, 'strides') and arg.strides and hasattr(arg, 'shape'):
                 # Find which dimension has stride 1 (the contiguous inner-most dim)
+                inner_dim_idx = None
                 try:
-                    # Get the index of the dimension that is physically contiguous
                     inner_dim_idx = arg.strides.index(1)
+                except ValueError:
+                    pass
+
+                if inner_dim_idx is not None:
                     inner_dim_size = int(arg.shape[inner_dim_idx])
-                    
                     # 2. PERFORM ALIGNMENT CHECK ON THE PHYSICAL INNER DIM
                     if inner_dim_size % 8 != 0:
                         layout_type = "NHWC" if inner_dim_idx == 1 else "Standard"
@@ -117,11 +120,6 @@ def validate_manifests(manifests):
                             f"Physical inner dimension (index {inner_dim_idx}, size {inner_dim_size}) is not aligned.\n"
                             f"Detected Layout: {layout_type}. Requires multiple of 8 for vectorization."
                         )
-                except ValueError:
-                    # If no stride is 1, it's a non-contiguous mess we already caught
-                    pass
-                except Exception as e:
-                    print(f"Warning during validation: {e}")
 
 def compile(
     model: torch.nn.Module, 

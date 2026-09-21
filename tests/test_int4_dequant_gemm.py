@@ -1,9 +1,12 @@
+import time
+import pytest
 import torch
 import torch.nn as nn
 import triton
 import triton.language as tl
-import time
 import kernel_lens as kl
+
+pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA GPU required")
 
 # ============================================================================
 # ⚡ INT4 Weight Dequantization GEMM Triton Kernel (W4A16)
