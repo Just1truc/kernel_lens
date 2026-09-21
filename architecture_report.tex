@@ -194,26 +194,12 @@ To understand how KernelLens automatically compiles Triton kernels, we first for
 
 Rather than exposing fragmented micro-steps, KernelLens operates through **4 unified, logical compiler phases**: (1)~Analysis \& Manifest Assembly; (2)~ONNX Graph Transformation; (3)~C++/CUDA Code Synthesis \& Hardening; and (4)~Zero-Copy Runtime Binding.
 
-\begin{excalidrawbox}
-\textbf{\large SIMPLIFIED ARCHITECTURE SPECIFICATION: 4-Phase KernelLens Compiler Pipeline} \\
-\textit{Use this simplified 4-phase flow layout for Figure 1 in Excalidraw:}
-
-\smallskip
-\textbf{1. Phase 1: Dual-Pass Tracing \& AST Inspection (Analysis)} \\
-PyTorch Model $\xrightarrow{\text{Pass 1 Eager}}$ Intercept PTX Bytecode \& $S_{\text{mem}}$ $\xrightarrow{\text{Pass 2 FX Trace}}$ SymPy Grid Expressions $\xrightarrow{\text{AST Inspector}}$ Classify Read/Write/In-Place Mutability $\rightarrow$ \texttt{KernelManifest}.
-
-\smallskip
-\textbf{2. Phase 2: Base ONNX Graph Transformation (Graph Modification)} \\
-\texttt{torch.onnx.export} $\xrightarrow{\text{Exporter Hook}}$ Intercept Triton Calls $\rightarrow$ Inject \texttt{triton\_custom::<kernel>} ONNX Node $\rightarrow$ Bind Host CPU Scalars (\texttt{OrtMemTypeCPUInput}) $\rightarrow$ Alias In-Place Output Buffers.
-
-\smallskip
-\textbf{3. Phase 3: Automated C++/CUDA Code Synthesis \& Hardening (Code Compilation)} \\
-Manifest $\xrightarrow{\texttt{ort\_gen/trt\_gen}}$ Synthesize \texttt{OrtCustomOp} \& \texttt{IPluginV2DynamicExt} C++ Plugins $\xrightarrow{\text{Embed Guards}}$ 16-Byte Alignment Guards $\xrightarrow{\text{Toolchain Build}}$ Blackwell PTX 9.0 Clamping + \texttt{patchelf} Stack Clearance $\rightarrow$ \texttt{libtriton\_plugins.so}.
-
-\smallskip
-\textbf{4. Phase 4: Zero-Copy Runtime Execution \& Pointer Binding (Runtime Execution)} \\
-Dynamic \texttt{ctypes.CDLL} Load $\xrightarrow{\text{IOBinding}}$ Map VRAM Memory Addresses Directly to Engine Contexts $\rightarrow$ Zero-Copy Execution ($\text{MaxDiff} = 0.00\text{e}+00$).
-\end{excalidrawbox}
+\begin{figure}[h!]
+\centering
+\includegraphics[width=\textwidth]{fig1_architecture.png}
+\caption{The 4-Phase KernelLens Compiler Architecture Pipeline: Dual-pass tracing and AST inspection (Phase 1), base ONNX graph transformation (Phase 2), C++/CUDA plugin code synthesis and 16-byte alignment guards (Phase 3), and zero-copy runtime IO binding (Phase 4).}
+\label{fig:architecture_pipeline}
+\end{figure}
 
 \subsection{Detailed Breakdown of the 4 Pipeline Phases}
 
@@ -550,19 +536,13 @@ INT4 W4A16 GEMM ($2048 \times 4096$) & \texttt{int4 / uint8} & $1.39 \text{ ms}$
     \item \textbf{Fused RMSNorm + Residual Addition ($2.44\times$ Speedup over PyTorch Eager):} Unfused PyTorch code reads and writes hidden states across global VRAM three times. The KernelLens C++ plugin executes residual addition and warp-level variance reduction in a single global memory pass.
 \end{enumerate}
 
-\begin{excalidrawbox}
-\textbf{\large EXCALIDRAW DIAGRAM SPECIFICATION: Figure 2 -- Benchmark Latency \& Speedup} \\
-\textit{Use this structure to create Figure 2 in Excalidraw (or run \texttt{python3 scripts/generate\_plots.py}):}
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.95\textwidth]{fig2_benchmarks.png}
+\caption{Empirical execution latency comparison (ms, log scale) across PyTorch Eager, torch.compile, Native Triton, and KernelLens ONNX Runtime C++ plugins. KernelLens delivers native Triton speed inside standalone C++ runtimes without Python dependencies.}
+\label{fig:benchmark_latencies}
+\end{figure}
 
-\smallskip
-$\bullet$ \textbf{Type:} Grouped Bar Chart (Log Scale Latency in ms, Lower is Better) \\
-$\bullet$ \textbf{X-Axis (Operators):} Fused RMSNorm, SwiGLU Activation, RoPE Embedding, Fused Cross-Entropy \\
-$\bullet$ \textbf{Bar Series (PyTorch Eager):} 24.12 ms (RMSNorm), 0.05 ms (SwiGLU), 8.01 ms (RoPE), 0.86 ms (CrossEntropy) \\
-$\bullet$ \textbf{Bar Series (torch.compile):} 6.97 ms (RMSNorm), 0.20 ms (SwiGLU), 1.77 ms (RoPE), 0.22 ms (CrossEntropy) \\
-$\bullet$ \textbf{Bar Series (Native Triton):} 7.03 ms (RMSNorm), 0.11 ms (SwiGLU), 1.90 ms (RoPE), 0.23 ms (CrossEntropy) \\
-$\bullet$ \textbf{Bar Series (KernelLens ORT):} 7.19 ms (RMSNorm), 0.42 ms (SwiGLU), 2.04 ms (RoPE), 0.39 ms (CrossEntropy) \\
-$\bullet$ \textbf{Annotation Callout:} \textit{"KernelLens matches native Triton execution latency while running inside pure C++ ONNX Runtime without Python dependencies!"}
-\end{excalidrawbox}
 
 ---
 
