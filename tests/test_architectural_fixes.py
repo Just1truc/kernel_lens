@@ -34,7 +34,7 @@ def test_nested_store():
     diff = torch.max(torch.abs((x * 3.0) - res)).item()
     print(f"  Nested Store Max Diff: {diff:e}")
     assert diff < 1e-5
-    print("  ✅ Passed Test Case 1!")
+    print("  Passed Test Case 1!")
 
 # --- Test Case 2: Dynamic Scalar Attribute Updates ---
 @triton.jit
@@ -70,7 +70,7 @@ def test_dynamic_scalars():
     print(f"  Dynamic Scalar Alpha=2.0 Max Diff: {diff1:e}")
     print(f"  Dynamic Scalar Alpha=5.5 Max Diff: {diff2:e}")
     assert diff1 < 1e-5 and diff2 < 1e-5
-    print("  ✅ Passed Test Case 2!")
+    print("  Passed Test Case 2!")
 
 # --- Test Case 3: 4D Tensor High-Rank Launch Grid ---
 @triton.jit
@@ -100,10 +100,10 @@ def test_high_rank_grid():
     diff = torch.max(torch.abs((x + 10.0) - res)).item()
     print(f"  High Rank Grid Max Diff: {diff:e}")
     assert diff < 1e-5
-    print("  ✅ Passed Test Case 3!")
+    print("  Passed Test Case 3!")
 
 if __name__ == "__main__":
     test_nested_store()
     test_dynamic_scalars()
     test_high_rank_grid()
-    print("\n🎉 ALL ARCHITECTURAL FIX VERIFICATION TESTS PASSED SUCCESSFULLY!")
+    print("\nALL ARCHITECTURAL FIX VERIFICATION TESTS PASSED SUCCESSFULLY!")

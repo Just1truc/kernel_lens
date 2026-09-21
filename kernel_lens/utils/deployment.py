@@ -14,7 +14,7 @@ def extract_libs(compiled_model, dest_dir: str, libs: list = None):
     if libs is None:
         libs = ["all"]
         
-    print(f"\n📦 Extracting deployment artifacts for '{compiled_model.model_name}' to '{dest_dir}'...")
+    print(f"\nExtracting deployment artifacts for '{compiled_model.model_name}' to '{dest_dir}'...")
     os.makedirs(dest_dir, exist_ok=True)
     
     cache_dir = compiled_model.cache_dir
@@ -58,4 +58,4 @@ def extract_libs(compiled_model, dest_dir: str, libs: list = None):
     if extracted_count == 0:
         print("  [Warning] No artifacts were found to extract. Did compilation complete successfully?")
     else:
-        print(f"✅ Successfully extracted {extracted_count} files to {dest_dir}/")
+        print(f"Successfully extracted {extracted_count} files to {dest_dir}/")

@@ -113,7 +113,7 @@ def validate_manifests(manifests):
                     if inner_dim_size % 8 != 0:
                         layout_type = "NHWC" if inner_dim_idx == 1 else "Standard"
                         raise ValueError(
-                            f"❌ [Alignment Error] Kernel '{m.kernel_name}' uses tensor '{arg.name}'\n"
+                            f"[Alignment Error] Kernel '{m.kernel_name}' uses tensor '{arg.name}'\n"
                             f"Physical inner dimension (index {inner_dim_idx}, size {inner_dim_size}) is not aligned.\n"
                             f"Detected Layout: {layout_type}. Requires multiple of 8 for vectorization."
                         )

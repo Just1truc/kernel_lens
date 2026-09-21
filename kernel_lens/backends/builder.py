@@ -274,7 +274,7 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
             missing_str = " and ".join(missing)
             raise RuntimeError(
                 "\n" + "=" * 80 + "\n"
-                f"❌ TENSORRT COMPILATION ERROR: TensorRT C++ header file(s) ({missing_str}) not found!\n\n"
+                f"TENSORRT COMPILATION ERROR: TensorRT C++ header file(s) ({missing_str}) not found!\n\n"
                 "KernelLens requires TensorRT C++ headers (NvInfer.h & NvInferPlugin.h) to compile TensorRT plugins.\n\n"
                 "To resolve this issue:\n"
                 "1. If TensorRT C++ headers are installed on your system, specify their location via:\n"
@@ -311,14 +311,14 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
             if "No such file or directory" in res.stderr and ("NvInfer" in res.stderr or "NvInferPlugin" in res.stderr):
                 raise RuntimeError(
                     "\n" + "=" * 80 + "\n"
-                    "❌ TENSORRT COMPILATION ERROR: NvInferPlugin.h or NvInfer.h header file not found during compilation!\n\n"
+                    "TENSORRT COMPILATION ERROR: NvInferPlugin.h or NvInfer.h header file not found during compilation!\n\n"
                     "To resolve this issue:\n"
                     "1. Set environment variable: export TENSORRT_INCLUDE_DIR=/path/to/tensorrt/include\n"
                     "2. Or install: pip install tensorrt-cu12-libs\n"
                     "3. Or copy NvInfer.h and NvInferPlugin.h to ~/tensorrt_headers/\n"
                     + "=" * 80
                 )
-            raise RuntimeError(f"❌ NVCC Compilation Failed:\n{res.stderr}")
+            raise RuntimeError(f"NVCC Compilation Failed:\n{res.stderr}")
 
     # Compile register_plugins.cpp
     reg_cpp = os.path.join(trt_plugins_dir, "register_plugins.cpp")

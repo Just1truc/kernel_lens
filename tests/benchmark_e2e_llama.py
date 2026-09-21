@@ -192,7 +192,7 @@ def measure_pipeline(prefill_fn, decode_fn, x_prefill, x_decode, prefill_iters=1
 
 def run_e2e_benchmark():
     print("=======================================================================")
-    print("📊 MEASURING REAL EMPIRICAL END-TO-END TRANSFORMER DECODER LATENCIES")
+    print(" MEASURING REAL EMPIRICAL END-TO-END TRANSFORMER DECODER LATENCIES")
     print("=======================================================================")
     
     hidden_dim = 1024
@@ -248,7 +248,7 @@ def run_e2e_benchmark():
     import json
     with open("measured_e2e_llama.json", "w") as f:
         json.dump(results, f, indent=4)
-    print("\n✅ Saved real end-to-end benchmark results to measured_e2e_llama.json")
+    print("\nSaved real end-to-end benchmark results to measured_e2e_llama.json")
 
 if __name__ == "__main__":
     run_e2e_benchmark()

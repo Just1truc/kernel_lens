@@ -227,7 +227,7 @@ def benchmark_latency(fn, args, kwargs=None, warmup=10, rep=50):
 
 def run_edge_case_test(model, inputs, name, native_fn, verbose=False):
     print(f"\n======================================================================")
-    print(f"🔥 EDGE-CASE BENCHMARK: {name}")
+    print(f" EDGE-CASE BENCHMARK: {name}")
     print(f"======================================================================")
 
     # 1. Native PyTorch
@@ -266,18 +266,18 @@ def run_edge_case_test(model, inputs, name, native_fn, verbose=False):
 
     speedup_trt = triton_lat / trt_lat if trt_lat > 0 else 0
 
-    print("\n📊 EDGE CASE RESULTS:")
+    print("\n EDGE CASE RESULTS:")
     print(f"  -> Triton (Python):   {triton_lat:.4f} ms")
     print(f"  -> Kernel Lens (ORT): {ort_lat:.4f} ms")
     print(f"  -> Kernel Lens (TRT): {trt_lat:.4f} ms")
     print(f"  -------------------------------------")
-    print(f"  🏆 SPEEDUP TRT vs Triton: {speedup_trt:.2f}x")
+    print(f"  SPEEDUP TRT vs Triton: {speedup_trt:.2f}x")
     print(f"  -> Max Diff TRT vs Triton: {err_trt:.6e}")
     print(f"  -> Max Diff ORT vs Triton: {err_ort:.6e}")
     if max_err < 1e-4:
-        print("  -> Numerical Parity: ✅ PASSED (Bit-wise Exact / Parity OK)")
+        print("  -> Numerical Parity: PASSED (Bit-wise Exact / Parity OK)")
     else:
-        print(f"  -> Numerical Parity: ❌ FAILED (Max Err: {max_err:.6e})")
+        print(f"  -> Numerical Parity: FAILED (Max Err: {max_err:.6e})")
 
 
 def run_all_edge_cases():
@@ -301,7 +301,7 @@ def run_all_edge_cases():
     w_up = torch.randn(128, device='cuda', dtype=torch.float32)
     run_edge_case_test(swiglu_model, (x_swi, w_gate, w_up), "SwiGLU_Gated_MLP_MultiScalar", native_fn=native_swiglu, verbose=verbose)
 
-    print("\n🚀 ALL EDGE-CASE STRESS TESTS COMPLETED.")
+    print("\n ALL EDGE-CASE STRESS TESTS COMPLETED.")
 
 
 import pytest

@@ -76,7 +76,7 @@ def test_llama3_rmsnorm():
     ort_diff = torch.abs(triton_out - kl_ort_out).max().item()
     print(f"  KernelLens ORT vs Triton Eager Max Diff: {ort_diff:e}")
     assert ort_diff < 1e-5, f"Llama 3 RMSNorm parity failed: diff={ort_diff}"
-    print("  ✅ [Passed] Llama 3 RMSNorm Kernel")
+    print("  [Passed] Llama 3 RMSNorm Kernel")
 
 # ============================================================================
 # Research Kernel 2: Liger-Kernel / PaLM SwiGLU Fused Activation
@@ -125,7 +125,7 @@ def test_swiglu_activation():
     ort_diff = torch.abs(triton_out - kl_ort_out).max().item()
     print(f"  KernelLens ORT vs Triton Eager Max Diff: {ort_diff:e}")
     assert ort_diff < 1e-5, f"SwiGLU parity failed: diff={ort_diff}"
-    print("  ✅ [Passed] SwiGLU Fused Activation Kernel")
+    print("  [Passed] SwiGLU Fused Activation Kernel")
 
 # ============================================================================
 # Research Kernel 3: Llama 3 / Qwen 2.5 Rotary Position Embedding (RoPE)
@@ -211,7 +211,7 @@ def test_rope_embedding():
     ort_diff = torch.abs(triton_out - kl_ort_out).max().item()
     print(f"  KernelLens ORT vs Triton Eager Max Diff: {ort_diff:e}")
     assert ort_diff < 1e-5, f"RoPE parity failed: diff={ort_diff}"
-    print("  ✅ [Passed] RoPE Positional Embedding Kernel")
+    print("  [Passed] RoPE Positional Embedding Kernel")
 
 # ============================================================================
 # Research Kernel 4: Liger-Kernel Fused Cross-Entropy Loss
@@ -280,12 +280,17 @@ def test_fused_cross_entropy():
     ort_diff = torch.abs(triton_out - kl_ort_out).max().item()
     print(f"  KernelLens ORT vs Triton Eager Max Diff: {ort_diff:e}")
     assert ort_diff < 1e-5, f"Fused Cross Entropy parity failed: diff={ort_diff}"
-    print("  ✅ [Passed] Fused Softmax & Cross Entropy Loss Kernel")
+    print("  [Passed] Fused Softmax & Cross Entropy Loss Kernel")
 
 if __name__ == "__main__":
     print("==========================================================================")
-    print("🔥 TESTING TRITON KERNELS FROM RECENT RESEARCH MODELS WITH KERNEL LENS 🔥")
+    print(" TESTING TRITON KERNELS FROM RECENT RESEARCH MODELS WITH KERNEL LENS ")
     print("==========================================================================")
+    test_llama3_rmsnorm()
+    test_swiglu_activation()
+    test_rope_embedding()
+    test_fused_cross_entropy()
+    print("\n ALL RECENT RESEARCH TRITON KERNELS PASSED WITH KERNEL LENS!")
     test_llama3_rmsnorm()
     test_swiglu_activation()
     test_rope_embedding()

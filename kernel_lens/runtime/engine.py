@@ -319,7 +319,7 @@ class CompiledModel:
                 
                 serialized_engine = builder.build_serialized_network(network, config)
                 if serialized_engine is None:
-                    raise RuntimeError("❌ TensorRT Engine Building Error: builder.build_serialized_network returned None.")
+                    raise RuntimeError("TensorRT Engine Building Error: builder.build_serialized_network returned None.")
                 with open(engine_path, "wb") as f:
                     f.write(serialized_engine)
             # ---------------------------------------------------

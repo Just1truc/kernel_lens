@@ -20,7 +20,7 @@
 
 ---
 
-## ⚡ Overview
+## Overview
 
 **KernelLens** is an open-source compiler framework designed to transform PyTorch models containing custom `@triton.jit` kernels into standalone, high-performance C++ shared libraries (`.so`). 
 
@@ -48,7 +48,7 @@ It generates native **ONNX Runtime (`OrtCustomOp`)** and **NVIDIA TensorRT 10.x 
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
 * **Zero C++ Boilerplate**: Automatically inspects Triton kernel signatures and synthesizes production-ready C++ plugin code (`.cu`, `.cpp`, `.h`) and compiled shared libraries (`.so`).
 * **SymPy Dynamic Grid AST Transpilation**: Parses Triton grid launchers (e.g., `triton.cdiv(M, BLOCK_SIZE)`) into pure C++ integer arithmetic evaluated dynamically at inference time ($< 0.5 \ \mu\text{s}$ CPU overhead).
@@ -60,7 +60,7 @@ It generates native **ONNX Runtime (`OrtCustomOp`)** and **NVIDIA TensorRT 10.x 
 
 ---
 
-## 📦 Installation
+## Installation
 
 KernelLens can be installed directly from PyPI:
 
@@ -83,7 +83,7 @@ pip install kernel-lens[all]   # Full backend suite
 
 ---
 
-## 💡 Quickstart
+## Quickstart
 
 Take any standard PyTorch `nn.Module` with a custom `@triton.jit` kernel and compile it for production in **3 lines of Python**:
 
@@ -138,7 +138,7 @@ trt_output = compiled_model.run((x,), backend="tensorrt")
 
 ---
 
-## 📊 Empirical GPU Latency Benchmark
+## Empirical GPU Latency Benchmark
 
 Evaluated on NVIDIA GPU across state-of-the-art LLM operators:
 
@@ -154,7 +154,7 @@ Evaluated on NVIDIA GPU across state-of-the-art LLM operators:
 
 ---
 
-## 🏗 System Architecture
+## System Architecture
 
 ```
                                   KernelLens Compiler Pipeline
@@ -171,7 +171,7 @@ Evaluated on NVIDIA GPU across state-of-the-art LLM operators:
 
 ---
 
-## 🛠 Advanced Usage & Native Debugging
+## Advanced Usage & Native Debugging
 
 ### Disk Caching & Production Reloading
 Once compiled, KernelLens persists plugins to disk. Reload existing engines instantly without recompilation:
@@ -191,7 +191,7 @@ KERNEL_LENS_DEBUG=1 python my_inference_script.py
 
 ---
 
-## 🧪 Step-by-Step Reproduction & Verification Guide
+## Step-by-Step Reproduction & Verification Guide
 
 Follow these steps to reproduce the empirical benchmarks and verify system correctness:
 
@@ -213,11 +213,11 @@ python3 tests/test_research_kernels.py
 
 *Expected Output:*
 ```text
-✅ [Passed] Llama 3 RMSNorm Kernel (MaxDiff: 0.000000e+00)
-✅ [Passed] SwiGLU Fused Activation Kernel (MaxDiff: 0.000000e+00)
-✅ [Passed] RoPE Positional Embedding Kernel (MaxDiff: 0.000000e+00)
-✅ [Passed] Fused Softmax & Cross Entropy Loss Kernel (MaxDiff: 0.000000e+00)
-🎉 ALL RECENT RESEARCH TRITON KERNELS PASSED WITH KERNEL LENS!
+[Passed] Llama 3 RMSNorm Kernel (MaxDiff: 0.000000e+00)
+[Passed] SwiGLU Fused Activation Kernel (MaxDiff: 0.000000e+00)
+[Passed] RoPE Positional Embedding Kernel (MaxDiff: 0.000000e+00)
+[Passed] Fused Softmax & Cross Entropy Loss Kernel (MaxDiff: 0.000000e+00)
+ALL RECENT RESEARCH TRITON KERNELS PASSED WITH KERNEL LENS!
 ```
 
 ### Step 3: Run End-to-End Multi-Layer Transformer Decoder Benchmarks
@@ -237,7 +237,7 @@ torch.compile (Inductor)            |    41.81 ms |     2.31 ms |        0.335 s
 KernelLens C++ Plugins (ORT)        |    45.38 ms |     2.97 ms |        0.423 s |   440.3 MB
 KernelLens TensorRT 10.x Plugin     |    43.90 ms |     2.23 ms |        0.328 s |   440.3 MB
 
-✅ Saved real end-to-end benchmark results to measured_e2e_llama.json
+Saved real end-to-end benchmark results to measured_e2e_llama.json
 ```
 
 ### Step 4: Verify Edge-Case Stress Tests & Architectural Fixes
@@ -250,7 +250,7 @@ python3 tests/test_edge_cases.py
 
 *Expected Output:*
 ```text
-🎉 ALL ARCHITECTURAL FIX VERIFICATION TESTS PASSED SUCCESSFULLY!
+ALL ARCHITECTURAL FIX VERIFICATION TESTS PASSED SUCCESSFULLY!
 ```
 
 ### Step 5: Recompile Technical Report LaTeX
@@ -264,7 +264,7 @@ pdflatex -interaction=nonstopmode architecture_report.tex
 
 ---
 
-## 📄 Citation & Research Paper
+## Citation & Research Paper
 
 If you use **KernelLens** in your research, please cite our technical report:
 
@@ -280,6 +280,6 @@ If you use **KernelLens** in your research, please cite our technical report:
 
 ---
 
-## 📜 License
+## License
 
 KernelLens is open-sourced under the [MIT License](LICENSE).
