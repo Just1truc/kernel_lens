@@ -24,7 +24,6 @@ dependencies = [
     "torch>=2.1.0",
     "triton>=2.1.0",
     "onnx>=1.15.0",
-    "tensorrt-cu12-libs; platform_system == 'Linux'",
 ]
 
 # Optional bracket dependencies for the inference engines
