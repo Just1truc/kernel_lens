@@ -150,7 +150,7 @@ Evaluated on NVIDIA GPU across state-of-the-art LLM operators:
 | **PaLM SwiGLU Activation ($N=4096$)** | $1.09\text{ ms}$ | $0.65\text{ ms}$ | $0.64\text{ ms}$ | **$0.62\text{ ms}$** | $0.64\text{ ms}$ | **$1.7\times$** |
 | **Qwen 2.5 RoPE Embedding ($D=128$)** | $2.03\text{ ms}$ | $0.45\text{ ms}$ | $0.51\text{ ms}$ | **$0.44\text{ ms}$** | $0.48\text{ ms}$ | **$4.2\times$** |
 
-*All runs achieve exact numerical parity ($\text{MaxDiff} = 0.00\text{e}+00$) against native Triton execution.*
+*All runs achieve exact numerical parity against native Triton execution.*
 
 ---
 
