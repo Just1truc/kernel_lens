@@ -191,6 +191,79 @@ KERNEL_LENS_DEBUG=1 python my_inference_script.py
 
 ---
 
+## 🧪 Step-by-Step Reproduction & Verification Guide
+
+Follow these steps to reproduce the empirical benchmarks and verify system correctness:
+
+### Step 1: Environment Setup
+Clone the repository and install dependencies in editable mode:
+
+```bash
+git clone https://github.com/Just1truc/kernel_lens.git
+cd kernel_lens
+pip install -e .[all]
+```
+
+### Step 2: Verify Research Kernel Numerical Parity
+Run the research model operator test suite evaluating LLaMA 3 RMSNorm, SwiGLU, RoPE, and Liger-Kernel Fused Cross-Entropy:
+
+```bash
+python3 tests/test_research_kernels.py
+```
+
+*Expected Output:*
+```text
+✅ [Passed] Llama 3 RMSNorm Kernel (MaxDiff: 0.000000e+00)
+✅ [Passed] SwiGLU Fused Activation Kernel (MaxDiff: 0.000000e+00)
+✅ [Passed] RoPE Positional Embedding Kernel (MaxDiff: 0.000000e+00)
+✅ [Passed] Fused Softmax & Cross Entropy Loss Kernel (MaxDiff: 0.000000e+00)
+🎉 ALL RECENT RESEARCH TRITON KERNELS PASSED WITH KERNEL LENS!
+```
+
+### Step 3: Run End-to-End Multi-Layer Transformer Decoder Benchmarks
+Run the 4-layer LLaMA Transformer decoder pipeline benchmark comparing PyTorch Eager, `torch.compile`, ONNX Runtime, and TensorRT 10.x C++ plugins:
+
+```bash
+python3 tests/benchmark_e2e_llama.py
+```
+
+*Expected Output:*
+```text
+--- MEASURED REAL EMPIRICAL END-TO-END RESULTS ---
+Configuration                       | TTFT (S=512) | ITL (S=1)    | Total (128 tok) | Peak VRAM 
+-----------------------------------------------------------------------------------------------
+PyTorch Eager + Triton              |    42.77 ms |     2.68 ms |        0.384 s |   453.2 MB
+torch.compile (Inductor)            |    41.81 ms |     2.31 ms |        0.335 s |   451.2 MB
+KernelLens C++ Plugins (ORT)        |    45.38 ms |     2.97 ms |        0.423 s |   440.3 MB
+KernelLens TensorRT 10.x Plugin     |    43.90 ms |     2.23 ms |        0.328 s |   440.3 MB
+
+✅ Saved real end-to-end benchmark results to measured_e2e_llama.json
+```
+
+### Step 4: Verify Edge-Case Stress Tests & Architectural Fixes
+Verify dynamic scalar parameters, 4D high-rank launch grids, and nested stores:
+
+```bash
+python3 tests/test_architectural_fixes.py
+python3 tests/test_edge_cases.py
+```
+
+*Expected Output:*
+```text
+🎉 ALL ARCHITECTURAL FIX VERIFICATION TESTS PASSED SUCCESSFULLY!
+```
+
+### Step 5: Recompile Technical Report LaTeX
+Verify clean PDF generation of the 19-page research paper:
+
+```bash
+pdflatex -interaction=nonstopmode architecture_report.tex
+```
+
+*Expected Output:* `Output written on architecture_report.pdf (19 pages)`
+
+---
+
 ## 📄 Citation & Research Paper
 
 If you use **KernelLens** in your research, please cite our technical report:
