@@ -564,18 +564,18 @@ INT4 W4A16 GEMM ($2048 \times 4096$) & \texttt{int4 / uint8} & $1.39 \text{ ms}$
     \item \textit{Custom Sub-Byte \& FP8 Quantization Layouts ($1.34\times$ Speedup):} TorchInductor lacks low-level PTX ISA version patching and specialized lowerings for sub-byte quantization. KernelLens automatically handles PTX version clamping and 1-byte pointer mapping (\texttt{GetTensorData<uint8\_t>()}) to accelerate FP8 and INT4 kernels directly inside ONNX Runtime and TensorRT.
 \end{enumerate}
 
-\subsection{End-to-End Model Benchmarks: LLaMA 3 8B Full Pipeline}
+\subsection{End-to-End Model Benchmarks: LLaMA Transformer Decoder Pipeline}
 
-To validate the central claim that KernelLens enables runtimes to perform global graph-level optimizations across standard neural network layers while retaining custom Triton kernels, we evaluate a complete **LLaMA 3 8B** \cite{llama3} transformer decoder pipeline ($32$ layers, $4096$ hidden dimension, $32$ attention heads).
+To validate the central claim that KernelLens enables runtimes to perform global graph-level optimizations across standard neural network layers while retaining custom Triton kernels, we evaluate a multi-layer **LLaMA Transformer Decoder Pipeline** \cite{llama3} ($4$ layers, $1024$ hidden dimension, $16$ attention heads).
 
 We benchmark three production runtime configurations:
 \begin{enumerate}
-    \item \textit{PyTorch Eager + Triton Kernels:} Eager PyTorch model execution in Python, invoking custom Triton RMSNorm, SwiGLU, and RoPE kernels via eager Python function calls.
+    \item \textit{PyTorch Eager + Triton Kernels:} Eager PyTorch model execution in Python, invoking custom Triton RMSNorm, SwiGLU and RoPE kernels via eager Python function calls.
     \item \textit{Native TensorRT 10.x (PyTorch Fallback):} Standard ONNX export converted to a TensorRT engine, where custom Triton nodes trigger Python fallback execution contexts.
-    \item \textit{TensorRT 10.x + KernelLens Plugins (Ours):} Complete LLaMA 3 8B network compiled into a single unified TensorRT engine (\texttt{.engine}), with custom Triton RMSNorm, SwiGLU, and RoPE kernels registered as \texttt{nvinfer1::IPluginV2DynamicExt} plugins.
+    \item \textit{TensorRT 10.x + KernelLens Plugins (Ours):} Complete 4-layer LLaMA network compiled into a single unified TensorRT engine (\texttt{.engine}), with custom Triton RMSNorm, SwiGLU and RoPE kernels registered as \texttt{nvinfer1::IPluginV2DynamicExt} plugins.
 \end{enumerate}
 
-We measure Time-To-First-Token (TTFT, prefill prompt length $S=512$, $B=1$), Inter-Token Latency (ITL, decode phase $S=1$, $B=1$), total generation latency for $128$ tokens, and peak GPU VRAM allocation.
+We measure Time-To-First-Token (TTFT, prefill prompt length $S=512$, $B=1$), Inter-Token Latency (ITL, decode phase $S=1$, $B=1$), total generation latency for $128$ tokens and peak GPU VRAM allocation.
 
 \begin{table}[h!]
 \centering
@@ -592,7 +592,7 @@ KernelLens C++ Plugins (ORT) & $45.38 \text{ ms}$ & $2.97 \text{ ms}$ & $0.423 \
 \bottomrule
 \end{tabular}%
 }
-\caption{End-to-end empirical inference benchmark on 4-layer LLaMA Transformer Decoder Pipeline ($D=1024$) showing latency, TTFT, ITL, and peak VRAM allocation measured on NVIDIA GPU.}
+\caption{End-to-end empirical inference benchmark on 4-layer LLaMA Transformer Decoder Pipeline ($D=1024$) showing latency, TTFT, ITL and peak VRAM allocation measured on NVIDIA GPU.}
 \label{tab:llama3_e2e}
 \end{table}
 
