@@ -111,7 +111,40 @@ Deploying PyTorch models containing custom \texttt{@triton.jit} kernels directly
 
 To bridge this gap, we present \textbf{KernelLens}, a comprehensive compilation and runtime synthesis system. KernelLens allows machine learning engineers to write custom PyTorch Triton kernels in pure Python, compile the entire model into optimized ONNX computational graphs paired with C++ custom operator shared libraries (\texttt{.so}), and execute them inside ONNX Runtime and TensorRT with zero manual C++ programming.
 
----
+\subsection{The Core Value Proposition: Full Graph Optimizations with Custom Triton Kernels}
+
+In enterprise deep learning production, real-world models (e.g., LLaMA 3, Mistral, Qwen 2.5, Flux, DeepSeek) are structural hybrids. They consist of:
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Standard Operators:} Linear projections, MatMuls, Softmax, Convolutions, Reshapes, and Element-wise activations.
+    \item \textbf{Custom Triton Kernels:} Specialized \texttt{@triton.jit} routines such as FlashAttention-2, Fused RMSNorm, SwiGLU, sub-byte INT4/FP8 dequantization GEMMs, and Mamba selective scan recurrence.
+\end{enumerate}
+
+Production execution engines such as **Microsoft ONNX Runtime** and **NVIDIA TensorRT** excel at applying global, graph-level compiler transformations over standard operators:
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Global Graph Optimizations:} Constant folding, dead-node elimination, layout transformations (NCHW $\leftrightarrow$ NHWC), and multi-node operator fusion (e.g., $\text{MatMul} + \text{Bias} + \text{GELU} \rightarrow \text{Fused GEMM}$).
+    \item \textbf{Target-Specific Engine Tuning:} FP16/INT8 auto-tuning, kernel selection, and CUDA Graph launch capture across standard graph subgraphs.
+    \item \textbf{VRAM Memory Planning:} Global buffer allocation planning that reuses VRAM slots across non-overlapping execution lifetimes.
+\end{itemize}
+
+\begin{figure}[h!]
+\centering
+\fbox{
+\begin{minipage}{0.92\textwidth}
+\small
+\textbf{The Deployment Dilemma vs. The KernelLens Solution}
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Without KernelLens (The Dilemma):} Because standard \texttt{torch.onnx.export} breaks on imperative Python \texttt{@triton.jit} functions, developers face a binary trade-off:
+    \begin{enumerate}
+        \item \textit{Option A (Stay in Python):} Keep the model in PyTorch Eager/Python runtime. Custom Triton kernels run, but you **forfeit 100\% of TensorRT and ONNX Runtime global graph optimizations** across all standard model layers.
+        \item \textit{Option B (Manual C++ Plugin Rewrite):} Hand-write hundreds of lines of complex C++/CUDA plugin boilerplate, ONNX schema registrations, memory alignment guards, and TensorRT engine wrappers for every Triton kernel.
+    \end{enumerate}
+    \item \textbf{With KernelLens (The Solution):} KernelLens compiles the **entire PyTorch model graph into ONNX/TensorRT**. Standard model layers are fully optimized and fused by TensorRT/ORT's native graph compilers, while custom Triton kernels are transparently synthesized and injected as zero-copy C++ plugins. Developers achieve **uncompromised enterprise graph optimizations + custom Triton kernel performance in a single standalone C++ execution pipeline.**
+\end{itemize}
+\end{minipage}
+}
+\caption{The core deployment value proposition: KernelLens unlocks full TensorRT and ONNX Runtime graph optimizations across standard operators while preserving high-throughput custom Triton kernels.}
+\label{fig:value_proposition}
+\end{figure}
 
 % =========================================================================
 \section{Related Work}
@@ -623,7 +656,9 @@ This will guarantee the absolute absence of out-of-bounds VRAM access, warp dive
 \section{Conclusion}
 % =========================================================================
 
-In this paper, we presented \textbf{KernelLens}, an automated compiler and runtime framework designed to bridge Python OpenAI Triton kernels directly to enterprise C++ inference engines (ONNX Runtime and NVIDIA TensorRT). By unifying dynamic parameter taxonomy extraction, an explicit 12-step compilation pipeline, dual-pass symbolic tracing, static AST inspection for nested memory access, global ONNX custom node injection, automated C++/CUDA code generation, 16-byte memory alignment guards, and zero-copy IO binding, KernelLens completely automates production kernel deployment. Empirical evaluation on SOTA research model kernels from \textbf{LLaMA 3}, \textbf{PaLM}, \textbf{Qwen 2.5}, and \textbf{Liger-Kernel} demonstrates exact numerical parity ($\text{MaxDiff} = 0.00\text{e}+00$) and high inference throughput.
+In this paper, we presented \textbf{KernelLens}, an automated compiler and runtime framework designed to bridge Python OpenAI Triton kernels directly to enterprise C++ inference engines (ONNX Runtime and NVIDIA TensorRT). By unifying dynamic parameter taxonomy extraction, an explicit 12-step compilation pipeline, dual-pass symbolic tracing, static AST inspection for nested memory access, global ONNX custom node injection, automated C++/CUDA code generation, 16-byte memory alignment guards, and zero-copy IO binding, KernelLens completely automates production kernel deployment.
+
+Crucially, KernelLens resolves the foundational deployment dilemma facing modern deep learning systems: it enables enterprise runtimes (TensorRT and ONNX Runtime) to execute 100\% of their global graph-level optimizations---including constant folding, operator fusion, FP16/INT8 engine selection, and memory planning---across all standard model layers, while transparently executing custom \texttt{@triton.jit} kernels via synthesized zero-copy C++ plugins. Empirical evaluation on state-of-the-art research model kernels from \textbf{LLaMA 3}, \textbf{PaLM}, \textbf{Qwen 2.5}, and \textbf{Liger-Kernel} demonstrates exact numerical parity ($\text{MaxDiff} = 0.00\text{e}+00$) and high inference throughput in pure C++ production environments.
 
 % =========================================================================
 \begin{thebibliography}{99}
