@@ -16,60 +16,101 @@
 \citation{triton2019}
 \citation{onnxruntime}
 \citation{tensorrt}
-\citation{pytorch2019}
 \@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{3}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Installation \& Setup}{3}{subsection.1.1}\protected@file@percent }
+\citation{pytorch20}
 \citation{onnxruntime}
 \citation{tensorrt}
-\citation{ligerkernel}
-\citation{flashattn}
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.2}The Core Value Proposition: Full Graph Optimizations with Custom Triton Kernels}{4}{subsection.1.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces The deployment value proposition: KernelLens enables TensorRT and ONNX Runtime graph optimizations across standard operators while preserving custom Triton kernels.\relax }}{4}{figure.caption.2}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:value_proposition}{{1}{4}{The deployment value proposition: KernelLens enables TensorRT and ONNX Runtime graph optimizations across standard operators while preserving custom Triton kernels.\relax }{figure.caption.2}{}}
 \@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{4}{section.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.1}PyTorch Compiler \& Inductor}{4}{subsection.2.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}ONNX \& Enterprise Inference Runtimes}{4}{subsection.2.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Triton-Based LLM Kernel Libraries}{4}{subsection.2.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {3}Anatomy of a Triton Kernel \& Parameter Taxonomy}{4}{section.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}What a Triton Kernel Requires: Formal Parameter Taxonomy}{4}{subsection.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {4}Complete 12-Step KernelLens Compiler Architecture}{5}{section.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Detailed Breakdown of the 12 Pipeline Steps}{6}{subsection.4.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.1}Step 1: User Module \& Kernel Definition}{6}{subsubsection.4.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.2}Step 2: Compiler Invocation (\texttt  {kl.compile})}{6}{subsubsection.4.1.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.3}Step 3: Pass 1 -- Concrete Eager Execution \& Artifact Interception (\texttt  {tracer.py})}{6}{subsubsection.4.1.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.4}Step 4: Pass 2 -- Symbolic FX Proxy Tracing \& SymPy Grid Extraction (\texttt  {tracer.py})}{6}{subsubsection.4.1.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.5}Step 5: Static AST Inspection of Main \& Nested Helper Functions (\texttt  {ast\_analyzer.py})}{6}{subsubsection.4.1.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.6}Step 6: Manifest Assembly \& Validation (\texttt  {manifest.py})}{7}{subsubsection.4.1.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.7}Step 7: Base ONNX Graph Export \& Domain Custom Node Injection (\texttt  {onnx\_exporter.py})}{7}{subsubsection.4.1.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.8}Step 8: Dynamic Host-Side CPU Scalar Binding (\texttt  {OrtMemTypeCPUInput})}{7}{subsubsection.4.1.8}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.9}Step 9: Automated C++/CUDA Code Generation (\texttt  {ort\_gen.py}, \texttt  {trt\_gen.py})}{7}{subsubsection.4.1.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.10}Step 10: 16-Byte Hardware Memory Alignment Guard Insertion (\texttt  {builder.py})}{8}{subsubsection.4.1.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.11}Step 11: Native C++ Shared Library Compilation (\texttt  {builder.py})}{8}{subsubsection.4.1.11}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.12}Step 12: Dynamic Plugin Registration \& Zero-Copy Runtime Execution (\texttt  {engine.py})}{8}{subsubsection.4.1.12}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5}16-Byte Memory Alignment Guards \& Zero-Copy Runtime}{8}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}128-Bit SIMD Memory Vectorization in GPU Hardware}{8}{subsection.5.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.1}Mechanics of Hardware Alignment Traps (CUDA Error 716)}{8}{subsubsection.5.1.1}\protected@file@percent }
+\citation{ligerkernel}
+\citation{flashattn1}
+\citation{flashattn2}
+\citation{aotinductor}
+\citation{triton2019}
+\citation{vllm}
+\citation{tensorrt_llm}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}ONNX \& Enterprise Inference Runtimes}{5}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Triton-Based LLM Kernel Libraries}{5}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Comparative System Analysis: KernelLens vs. Upstream Tools}{5}{subsection.2.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Systemic feature matrix comparing KernelLens against existing compiler frameworks and custom op tooling.\relax }}{5}{table.caption.3}\protected@file@percent }
+\newlabel{tab:system_comparison}{{1}{5}{Systemic feature matrix comparing KernelLens against existing compiler frameworks and custom op tooling.\relax }{table.caption.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Anatomy of a Triton Kernel \& Parameter Taxonomy}{5}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}What a Triton Kernel Requires: Formal Parameter Taxonomy}{5}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Consolidated 4-Phase KernelLens Compiler Architecture}{6}{section.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces The 4-Phase KernelLens Compiler Architecture Pipeline: Dual-pass tracing and AST inspection (Phase 1), base ONNX graph transformation (Phase 2), C++/CUDA plugin code synthesis and 16-byte alignment guards (Phase 3), and zero-copy runtime IO binding (Phase 4).\relax }}{6}{figure.caption.4}\protected@file@percent }
+\newlabel{fig:architecture_pipeline}{{2}{6}{The 4-Phase KernelLens Compiler Architecture Pipeline: Dual-pass tracing and AST inspection (Phase 1), base ONNX graph transformation (Phase 2), C++/CUDA plugin code synthesis and 16-byte alignment guards (Phase 3), and zero-copy runtime IO binding (Phase 4).\relax }{figure.caption.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Detailed Breakdown of the 4 Pipeline Phases}{7}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.1}Phase 1: Dual-Pass Tracing \& AST Inspection (Analysis \& Manifest Assembly)}{7}{subsubsection.4.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.2}Phase 2: Base ONNX Graph Export \& Custom Node Injection (Graph Transformation)}{7}{subsubsection.4.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.3}Phase 3: Automated C++/CUDA Code Synthesis \& Hardening (Code Synthesis \& Compilation)}{8}{subsubsection.4.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.4}Phase 4: Zero-Copy Runtime Execution \& Pointer Binding (Runtime Execution)}{8}{subsubsection.4.1.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}16-Byte Memory Alignment Guards \& Zero-Copy Runtime}{9}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}128-Bit SIMD Memory Vectorization in GPU Hardware}{9}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.1}Mechanics of Hardware Alignment Traps (CUDA Error 716)}{9}{subsubsection.5.1.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Automated C++ Alignment Guard \& Dynamic Staging Engine}{9}{subsection.5.2}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Automated 16-byte memory alignment guard workflow executed in generated C++ plugins.\relax }}{9}{figure.caption.2}\protected@file@percent }
-\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
-\newlabel{fig:alignment_guard}{{1}{9}{Automated 16-byte memory alignment guard workflow executed in generated C++ plugins.\relax }{figure.caption.2}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Automated 16-byte memory alignment guard workflow executed in generated C++ plugins.\relax }}{9}{figure.caption.5}\protected@file@percent }
+\newlabel{fig:alignment_guard}{{3}{9}{Automated 16-byte memory alignment guard workflow executed in generated C++ plugins.\relax }{figure.caption.5}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Zero-Copy Runtime IO Binding Engine (\texttt  {engine.py})}{10}{subsection.5.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {5.3.1}1. ONNX Runtime IO Binding}{10}{subsubsection.5.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.3.2}2. TensorRT Zero-Copy Pointer Registration}{10}{subsubsection.5.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.3.2}2. TensorRT Zero-Copy Pointer Registration}{11}{subsubsection.5.3.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {6}Experiments \& Empirical Results}{11}{section.6}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Benchmark Experimental Setup}{11}{subsection.6.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Numerical Parity \& Accuracy Results}{11}{subsection.6.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Numerical parity evaluation across state-of-the-art research model kernels and architectural edge cases.\relax }}{11}{table.caption.3}\protected@file@percent }
-\newlabel{tab:research_results}{{1}{11}{Numerical parity evaluation across state-of-the-art research model kernels and architectural edge cases.\relax }{table.caption.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Empirical GPU Execution Latency Benchmark}{11}{subsection.6.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Analysis of Performance Wins \& Architectural Bottlenecks:}{11}{section*.5}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Empirical execution latencies (ms) measured directly on NVIDIA GPU across execution backends.\relax }}{12}{table.caption.4}\protected@file@percent }
-\newlabel{tab:empirical_latencies}{{2}{12}{Empirical execution latencies (ms) measured directly on NVIDIA GPU across execution backends.\relax }{table.caption.4}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Numerical parity evaluation across research model kernels and architectural edge cases.\relax }}{12}{table.caption.6}\protected@file@percent }
+\newlabel{tab:research_results}{{2}{12}{Numerical parity evaluation across research model kernels and architectural edge cases.\relax }{table.caption.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Empirical GPU Execution Latency Benchmark}{12}{subsection.6.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Empirical execution latencies (ms) measured directly on NVIDIA GPU across execution backends.\relax }}{12}{table.caption.7}\protected@file@percent }
+\newlabel{tab:empirical_latencies}{{3}{12}{Empirical execution latencies (ms) measured directly on NVIDIA GPU across execution backends.\relax }{table.caption.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}FP8 \& Sub-Byte (INT4/INT8) Quantization Evaluation on NVIDIA RTX 5060 Ti GPU}{12}{subsection.6.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Empirical execution latencies (ms) and numerical accuracy measured on NVIDIA GeForce RTX 5060 Ti GPU.\relax }}{12}{table.caption.8}\protected@file@percent }
+\newlabel{tab:rtx5060ti_quantization}{{4}{12}{Empirical execution latencies (ms) and numerical accuracy measured on NVIDIA GeForce RTX 5060 Ti GPU.\relax }{table.caption.8}{}}
+\citation{llama3}
+\@writefile{toc}{\contentsline {paragraph}{Quantization Performance Insights:}{13}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Analysis of Performance Wins \& Architectural Bottlenecks:}{13}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}End-to-End Model Benchmarks: LLaMA 3 8B Full Pipeline}{13}{subsection.6.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces End-to-end empirical inference benchmark on 4-layer LLaMA Transformer Decoder Pipeline ($D=1024$) showing latency, TTFT, ITL, and peak VRAM allocation measured on NVIDIA GPU.\relax }}{14}{table.caption.11}\protected@file@percent }
+\newlabel{tab:llama3_e2e}{{5}{14}{End-to-end empirical inference benchmark on 4-layer LLaMA Transformer Decoder Pipeline ($D=1024$) showing latency, TTFT, ITL, and peak VRAM allocation measured on NVIDIA GPU.\relax }{table.caption.11}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.6}Dynamic Batching \& Dynamic Shape Evaluation}{14}{subsection.6.6}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Dynamic shape execution latencies (ms) of KernelLens TensorRT plugin across varying batch sizes and sequence lengths.\relax }}{14}{table.caption.12}\protected@file@percent }
+\newlabel{tab:dynamic_shapes}{{6}{14}{Dynamic shape execution latencies (ms) of KernelLens TensorRT plugin across varying batch sizes and sequence lengths.\relax }{table.caption.12}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Empirical execution latency comparison (ms, log scale) across PyTorch Eager, torch.compile, Native Triton and KernelLens ONNX Runtime C++ plugins. KernelLens delivers native Triton speed inside C++ runtimes without Python dependencies.\relax }}{15}{figure.caption.13}\protected@file@percent }
+\newlabel{fig:benchmark_latencies}{{4}{15}{Empirical execution latency comparison (ms, log scale) across PyTorch Eager, torch.compile, Native Triton and KernelLens ONNX Runtime C++ plugins. KernelLens delivers native Triton speed inside C++ runtimes without Python dependencies.\relax }{figure.caption.13}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {7}Future Work \& Architectural Roadmap}{15}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Distributed Multi-GPU Tensor Parallelism \& Embedded NCCL Synchronization}{15}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}Native Blackwell Architecture (\texttt  {sm\_120a}) \& PTX ISA 9.x Hardware Acceleration}{16}{subsection.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}Dynamic Auto-Tuning Meta-Parameter Dispatch \& Runtime Re-JIT}{16}{subsection.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.4}Cross-Platform Heterogeneous Targets: Apple Metal \& WebGPU Compute}{16}{subsection.7.4}\protected@file@percent }
 \bibcite{triton2019}{1}
 \bibcite{llama3}{2}
 \bibcite{ligerkernel}{3}
 \bibcite{qwen25}{4}
-\bibcite{flashattn}{5}
-\bibcite{pytorch2019}{6}
-\bibcite{onnx2017}{7}
-\bibcite{tensorrt}{8}
-\@writefile{toc}{\contentsline {section}{\numberline {7}Future Work}{13}{section.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {8}Conclusion}{13}{section.8}\protected@file@percent }
-\bibcite{onnxruntime}{9}
-\gdef \@abspage@last{14}
+\bibcite{flashattn1}{5}
+\bibcite{flashattn2}{6}
+\bibcite{pytorch}{7}
+\bibcite{pytorch20}{8}
+\bibcite{aotinductor}{9}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.5}Formal Verification \& SMT-Based Kernel Safety Proving}{17}{subsection.7.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8}Conclusion}{17}{section.8}\protected@file@percent }
+\bibcite{tvm}{10}
+\bibcite{mlir}{11}
+\bibcite{vllm}{12}
+\bibcite{tensorrt_llm}{13}
+\bibcite{torch_tensorrt}{14}
+\bibcite{iree}{15}
+\bibcite{xla}{16}
+\bibcite{halide}{17}
+\bibcite{deepspeed_inference}{18}
+\bibcite{fastertransformer}{19}
+\bibcite{onnx2017}{20}
+\bibcite{tensorrt}{21}
+\bibcite{onnxruntime}{22}
+\bibcite{byteir}{23}
+\bibcite{tgi}{24}
+\bibcite{cudagraphs}{25}
+\bibcite{mistral7b}{26}
+\gdef \@abspage@last{19}

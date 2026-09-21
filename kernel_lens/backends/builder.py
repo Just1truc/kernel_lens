@@ -320,6 +320,21 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
                 )
             raise RuntimeError(f"❌ NVCC Compilation Failed:\n{res.stderr}")
 
+    # Compile register_plugins.cpp
+    reg_cpp = os.path.join(trt_plugins_dir, "register_plugins.cpp")
+    if os.path.exists(reg_cpp):
+        reg_obj = os.path.join(trt_plugins_dir, "register_plugins.o")
+        inc_flags_cpp = [
+            f"-I{d}" for d in trt_inc_dirs
+            if (os.path.exists(os.path.join(d, "NvInfer.h")) or os.path.exists(os.path.join(d, "NvInferPlugin.h")))
+            and not os.path.exists(os.path.join(d, "crt", "math_functions.h"))
+        ]
+        cmd_cpp = [
+            cpp_compiler, "-c", reg_cpp, "-o", reg_obj, "-O3", "-fPIC", f"-I{cuda_inc}"
+        ] + inc_flags_cpp
+        subprocess.run(cmd_cpp, check=True)
+        obj_files.append(reg_obj)
+
     so_path = os.path.join(trt_plugins_dir, "libtriton_trt_plugins.so")
     
     trt_lib_dirs = []
@@ -349,10 +364,11 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
         f"-L{cuda_lib}", "-lcuda", "-lcudart", f"-Wl,-rpath,{cuda_lib}"
     ] + extra_link_args + nvinfer_link_flag
     
-    try:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except subprocess.CalledProcessError as e:
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
         print("\n[ERROR] TensorRT compilation failed. Link command:", " ".join(cmd))
-        raise e
+        print("LINK STDOUT:", res.stdout)
+        print("LINK STDERR:", res.stderr)
+        raise RuntimeError(f"TensorRT linking failed: {res.stderr}")
         
     # print(f"     [Builder] TRT Compilation successful! Plugin saved to {so_path}")

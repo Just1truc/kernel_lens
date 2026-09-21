@@ -216,27 +216,33 @@ def run_e2e_benchmark():
     torch.cuda.empty_cache()
     
     # Measure Configuration 3: KernelLens ORT C++ Plugin
-    kl_prefill_model = kl.compile(model, (x_prefill,), name="llama3_pipeline_prefill", backends=["onnx"])
-    kl_decode_model = kl.compile(model, (x_decode,), name="llama3_pipeline_decode", backends=["onnx"])
+    kl_prefill_ort = kl.compile(model, (x_prefill,), name="llama3_pipeline_prefill", backends=["onnx", "tensorrt"])
+    kl_decode_ort = kl.compile(model, (x_decode,), name="llama3_pipeline_decode", backends=["onnx", "tensorrt"])
     
-    kl_prefill_fn = lambda inp: kl_prefill_model.run((inp,), backend="onnx")
-    kl_decode_fn = lambda inp: kl_decode_model.run((inp,), backend="onnx")
+    kl_prefill_ort_fn = lambda inp: kl_prefill_ort.run((inp,), backend="onnx")
+    kl_decode_ort_fn = lambda inp: kl_decode_ort.run((inp,), backend="onnx")
+    for _ in range(3): kl_prefill_ort_fn(x_prefill); kl_decode_ort_fn(x_decode)
+    ort_ttft, ort_itl, ort_total, ort_vram = measure_pipeline(kl_prefill_ort_fn, kl_decode_ort_fn, x_prefill, x_decode)
     
-    for _ in range(3): kl_prefill_fn(x_prefill); kl_decode_fn(x_decode)
-    
-    kl_ttft, kl_itl, kl_total, kl_vram = measure_pipeline(kl_prefill_fn, kl_decode_fn, x_prefill, x_decode)
+    # Measure Configuration 4: KernelLens TensorRT 10.x C++ Plugin Engine
+    kl_prefill_trt_fn = lambda inp: kl_prefill_ort.run((inp,), backend="tensorrt")
+    kl_decode_trt_fn = lambda inp: kl_decode_ort.run((inp,), backend="tensorrt")
+    for _ in range(3): kl_prefill_trt_fn(x_prefill); kl_decode_trt_fn(x_decode)
+    trt_ttft, trt_itl, trt_total, trt_vram = measure_pipeline(kl_prefill_trt_fn, kl_decode_trt_fn, x_prefill, x_decode)
     
     print("\n--- MEASURED REAL EMPIRICAL END-TO-END RESULTS ---")
     print(f"{'Configuration':<35} | {'TTFT (S=512)':<12} | {'ITL (S=1)':<12} | {'Total (128 tok)':<15} | {'Peak VRAM':<10}")
     print("-" * 95)
     print(f"{'PyTorch Eager + Triton':<35} | {eager_ttft:8.2f} ms | {eager_itl:8.2f} ms | {eager_total:12.3f} s | {eager_vram:7.1f} MB")
     print(f"{'torch.compile (Inductor)':<35} | {tc_ttft:8.2f} ms | {tc_itl:8.2f} ms | {tc_total:12.3f} s | {tc_vram:7.1f} MB")
-    print(f"{'KernelLens C++ Plugins (ORT)':<35} | {kl_ttft:8.2f} ms | {kl_itl:8.2f} ms | {kl_total:12.3f} s | {kl_vram:7.1f} MB")
+    print(f"{'KernelLens C++ Plugins (ORT)':<35} | {ort_ttft:8.2f} ms | {ort_itl:8.2f} ms | {ort_total:12.3f} s | {ort_vram:7.1f} MB")
+    print(f"{'KernelLens TensorRT 10.x Plugin':<35} | {trt_ttft:8.2f} ms | {trt_itl:8.2f} ms | {trt_total:12.3f} s | {trt_vram:7.1f} MB")
     
     results = {
         "PyTorch Eager": {"TTFT_ms": eager_ttft, "ITL_ms": eager_itl, "Total_s": eager_total, "PeakVRAM_MB": eager_vram},
         "torch.compile": {"TTFT_ms": tc_ttft, "ITL_ms": tc_itl, "Total_s": tc_total, "PeakVRAM_MB": tc_vram},
-        "KernelLens ORT": {"TTFT_ms": kl_ttft, "ITL_ms": kl_itl, "Total_s": kl_total, "PeakVRAM_MB": kl_vram}
+        "KernelLens ORT": {"TTFT_ms": ort_ttft, "ITL_ms": ort_itl, "Total_s": ort_total, "PeakVRAM_MB": ort_vram},
+        "KernelLens TensorRT": {"TTFT_ms": trt_ttft, "ITL_ms": trt_itl, "Total_s": trt_total, "PeakVRAM_MB": trt_vram}
     }
     
     import json

@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023) (preloaded format=pdflatex 2025.7.4)  15 SEP 2026 14:53
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023) (preloaded format=pdflatex 2025.7.4)  21 SEP 2026 19:01
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -145,6 +145,26 @@ Package: iftex 2022/02/03 v1.0f TeX engine tests
 \Gm@layoutvoffset=\dimen157
 \Gm@dimlist=\toks30
 )
+(/usr/share/texlive/texmf-dist/tex/latex/graphics/graphicx.sty
+Package: graphicx 2021/09/16 v1.2d Enhanced LaTeX Graphics (DPC,SPQR)
+
+(/usr/share/texlive/texmf-dist/tex/latex/graphics/graphics.sty
+Package: graphics 2022/03/10 v1.4e Standard LaTeX Graphics (DPC,SPQR)
+
+(/usr/share/texlive/texmf-dist/tex/latex/graphics/trig.sty
+Package: trig 2021/08/11 v1.11 sin cos tan (DPC)
+)
+(/usr/share/texlive/texmf-dist/tex/latex/graphics-cfg/graphics.cfg
+File: graphics.cfg 2016/06/04 v1.11 sample graphics configuration
+)
+Package graphics Info: Driver file: pdftex.def on input line 107.
+
+(/usr/share/texlive/texmf-dist/tex/latex/graphics-def/pdftex.def
+File: pdftex.def 2022/09/22 v1.2b Graphics/color driver for pdftex
+))
+\Gin@req@height=\dimen158
+\Gin@req@width=\dimen159
+)
 (/usr/share/texlive/texmf-dist/tex/latex/hyperref/hyperref.sty
 Package: hyperref 2023-02-07 v7.00v Hypertext links for LaTeX
 
@@ -194,7 +214,7 @@ Package: kvoptions 2022-06-15 v3.15 Key value format for package options (HO)
 ))
 \c@section@level=\count274
 )
-\@linkdim=\dimen158
+\@linkdim=\dimen160
 \Hy@linkcounter=\count275
 \Hy@pagecounter=\count276
 
@@ -230,7 +250,7 @@ Package hyperref Info: Bookmarks ON on input line 4425.
 Package: url 2013/09/16  ver 3.4  Verb mode for urls, etc.
 )
 LaTeX Info: Redefining \url on input line 4763.
-\XeTeXLinkMargin=\dimen159
+\XeTeXLinkMargin=\dimen161
 
 (/usr/share/texlive/texmf-dist/tex/generic/bitset/bitset.sty
 Package: bitset 2019/12/09 v1.3 Handle bit-vector datatype (HO)
@@ -240,8 +260,8 @@ Package: bigintcalc 2019/12/15 v1.5 Expandable calculations on big integers (HO
 )
 ))
 \Fld@menulength=\count279
-\Field@Width=\dimen160
-\Fld@charsize=\dimen161
+\Field@Width=\dimen162
+\Fld@charsize=\dimen163
 Package hyperref Info: Hyper figures OFF on input line 6042.
 Package hyperref Info: Link nesting OFF on input line 6047.
 Package hyperref Info: Hyper index ON on input line 6050.
@@ -287,14 +307,14 @@ Package uniquecounter Info: New unique counter `rerunfilecheck' on input line 2
 \lst@gtempboxa=\box53
 \lst@token=\toks31
 \lst@length=\count286
-\lst@currlwidth=\dimen162
+\lst@currlwidth=\dimen164
 \lst@column=\count287
 \lst@pos=\count288
-\lst@lostspace=\dimen163
-\lst@width=\dimen164
+\lst@lostspace=\dimen165
+\lst@width=\dimen166
 \lst@newlines=\count289
 \lst@lineno=\count290
-\lst@maxwidth=\dimen165
+\lst@maxwidth=\dimen167
 
 (/usr/share/texlive/texmf-dist/tex/latex/listings/lstmisc.sty
 File: lstmisc.sty 2023/02/27 1.9 (Carsten Heinz)
@@ -315,9 +335,6 @@ File: color.cfg 2016/01/02 v1.6 sample color configuration
 )
 Package xcolor Info: Driver file: pdftex.def on input line 227.
 
-(/usr/share/texlive/texmf-dist/tex/latex/graphics-def/pdftex.def
-File: pdftex.def 2022/09/22 v1.2b Graphics/color driver for pdftex
-)
 (/usr/share/texlive/texmf-dist/tex/latex/graphics/mathcolor.ltx)
 Package xcolor Info: Model `cmy' substituted by `cmy0' on input line 1353.
 Package xcolor Info: Model `hsb' substituted by `rgb' on input line 1357.
@@ -331,23 +348,23 @@ Package xcolor Info: Model `wave' substituted by `hsb' on input line 1376.
 )
 (/usr/share/texlive/texmf-dist/tex/latex/booktabs/booktabs.sty
 Package: booktabs 2020/01/12 v1.61803398 Publication quality tables
-\heavyrulewidth=\dimen166
-\lightrulewidth=\dimen167
-\cmidrulewidth=\dimen168
-\belowrulesep=\dimen169
-\belowbottomsep=\dimen170
-\aboverulesep=\dimen171
-\abovetopsep=\dimen172
-\cmidrulesep=\dimen173
-\cmidrulekern=\dimen174
-\defaultaddspace=\dimen175
+\heavyrulewidth=\dimen168
+\lightrulewidth=\dimen169
+\cmidrulewidth=\dimen170
+\belowrulesep=\dimen171
+\belowbottomsep=\dimen172
+\aboverulesep=\dimen173
+\abovetopsep=\dimen174
+\cmidrulesep=\dimen175
+\cmidrulekern=\dimen176
+\defaultaddspace=\dimen177
 \@cmidla=\count293
 \@cmidlb=\count294
-\@aboverulesep=\dimen176
-\@belowrulesep=\dimen177
+\@aboverulesep=\dimen178
+\@belowrulesep=\dimen179
 \@thisruleclass=\count295
 \@lastruleclass=\count296
-\@thisrulewidth=\dimen178
+\@thisrulewidth=\dimen180
 )
 (/usr/share/texlive/texmf-dist/tex/latex/microtype/microtype.sty
 Package: microtype 2023/03/13 v3.1a Micro-typographical refinements (RS)
@@ -364,7 +381,7 @@ LaTeX Info: Redefining \leftprotrusion on input line 1060.
 \MT@prot@toks=\toks33
 LaTeX Info: Redefining \rightprotrusion on input line 1078.
 LaTeX Info: Redefining \textls on input line 1368.
-\MT@outer@kern=\dimen179
+\MT@outer@kern=\dimen181
 LaTeX Info: Redefining \textmicrotypecontext on input line 1988.
 \MT@listname@count=\count299
 
@@ -385,26 +402,26 @@ Package: tabularx 2020/01/15 v2.11c `tabularx' package (DPC)
 
 (/usr/share/texlive/texmf-dist/tex/latex/tools/array.sty
 Package: array 2022/09/04 v2.5g Tabular extension package (FMi)
-\col@sep=\dimen180
+\col@sep=\dimen182
 \ar@mcellbox=\box56
-\extrarowheight=\dimen181
+\extrarowheight=\dimen183
 \NC@list=\toks34
 \extratabsurround=\skip58
 \backup@length=\skip59
 \ar@cellbox=\box57
 )
-\TX@col@width=\dimen182
-\TX@old@table=\dimen183
-\TX@old@col=\dimen184
-\TX@target=\dimen185
-\TX@delta=\dimen186
+\TX@col@width=\dimen184
+\TX@old@table=\dimen185
+\TX@old@col=\dimen186
+\TX@target=\dimen187
+\TX@delta=\dimen188
 \TX@cols=\count300
 \TX@ftn=\toks35
 )
 (/usr/share/texlive/texmf-dist/tex/latex/enumitem/enumitem.sty
 Package: enumitem 2019/06/20 v3.9 Customized lists
 \labelindent=\skip60
-\enit@outerparindent=\dimen187
+\enit@outerparindent=\dimen189
 \enit@toks=\toks36
 \enit@inbox=\box58
 \enit@count@id=\count301
@@ -415,14 +432,14 @@ Package: caption 2023/03/12 v3.6j Customizing captions (AR)
 
 (/usr/share/texlive/texmf-dist/tex/latex/caption/caption3.sty
 Package: caption3 2023/03/12 v2.4 caption3 kernel (AR)
-\caption@tempdima=\dimen188
-\captionmargin=\dimen189
-\caption@leftmargin=\dimen190
-\caption@rightmargin=\dimen191
-\caption@width=\dimen192
-\caption@indent=\dimen193
-\caption@parindent=\dimen194
-\caption@hangindent=\dimen195
+\caption@tempdima=\dimen190
+\captionmargin=\dimen191
+\caption@leftmargin=\dimen192
+\caption@rightmargin=\dimen193
+\caption@width=\dimen194
+\caption@indent=\dimen195
+\caption@parindent=\dimen196
+\caption@hangindent=\dimen197
 Package caption Info: Standard document class detected.
 )
 \c@caption@flags=\count303
@@ -443,7 +460,7 @@ Package: colortbl 2022/06/20 v1.0f Color table columns (DPC)
 \minrowclearance=\skip61
 \rownum=\count307
 )
-Package hyperref Info: Option `colorlinks' set `true' on input line 33.
+Package hyperref Info: Option `colorlinks' set `true' on input line 34.
 
 (/usr/share/texlive/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def
 File: l3backend-pdftex.def 2023-01-16 L3 backend support: PDF output (pdfTeX)
@@ -453,24 +470,24 @@ File: l3backend-pdftex.def 2023-01-16 L3 backend support: PDF output (pdfTeX)
 (./architecture_report.aux)
 \openout1 = `architecture_report.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 78.
-LaTeX Font Info:    ... okay on input line 78.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 78.
-LaTeX Font Info:    ... okay on input line 78.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 78.
-LaTeX Font Info:    ... okay on input line 78.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 78.
-LaTeX Font Info:    ... okay on input line 78.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 78.
-LaTeX Font Info:    ... okay on input line 78.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 78.
-LaTeX Font Info:    ... okay on input line 78.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 78.
-LaTeX Font Info:    ... okay on input line 78.
-LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 78.
-LaTeX Font Info:    ... okay on input line 78.
-LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 78.
-LaTeX Font Info:    ... okay on input line 78.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 79.
+LaTeX Font Info:    ... okay on input line 79.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 79.
+LaTeX Font Info:    ... okay on input line 79.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 79.
+LaTeX Font Info:    ... okay on input line 79.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 79.
+LaTeX Font Info:    ... okay on input line 79.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 79.
+LaTeX Font Info:    ... okay on input line 79.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 79.
+LaTeX Font Info:    ... okay on input line 79.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 79.
+LaTeX Font Info:    ... okay on input line 79.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 79.
+LaTeX Font Info:    ... okay on input line 79.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 79.
+LaTeX Font Info:    ... okay on input line 79.
 
 *geometry* driver: auto-detecting
 *geometry* detected driver: pdftex
@@ -506,50 +523,59 @@ LaTeX Font Info:    ... okay on input line 78.
 * \@reversemarginfalse
 * (1in=72.27pt=25.4mm, 1cm=28.453pt)
 
-Package hyperref Info: Link coloring ON on input line 78.
+(/usr/share/texlive/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
+[Loading MPS to PDF converter (version 2006.09.02).]
+\scratchcounter=\count309
+\scratchdimen=\dimen198
+\scratchbox=\box60
+\nofMPsegments=\count310
+\nofMParguments=\count311
+\everyMPshowfont=\toks38
+\MPscratchCnt=\count312
+\MPscratchDim=\dimen199
+\MPnumerator=\count313
+\makeMPintoPDFobject=\count314
+\everyMPtoPDFconversion=\toks39
+) (/usr/share/texlive/texmf-dist/tex/latex/epstopdf-pkg/epstopdf-base.sty
+Package: epstopdf-base 2020-01-24 v2.11 Base part for package epstopdf
+Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
+85.
+
+(/usr/share/texlive/texmf-dist/tex/latex/latexconfig/epstopdf-sys.cfg
+File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Liv
+e
+))
+Package hyperref Info: Link coloring ON on input line 79.
+
 (./architecture_report.out) (./architecture_report.out)
 \@outlinefile=\write3
 \openout3 = `architecture_report.out'.
 
-\c@lstlisting=\count309
-
-(/usr/share/texlive/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
-[Loading MPS to PDF converter (version 2006.09.02).]
-\scratchcounter=\count310
-\scratchdimen=\dimen196
-\scratchbox=\box60
-\nofMPsegments=\count311
-\nofMParguments=\count312
-\everyMPshowfont=\toks38
-\MPscratchCnt=\count313
-\MPscratchDim=\dimen197
-\MPnumerator=\count314
-\makeMPintoPDFobject=\count315
-\everyMPtoPDFconversion=\toks39
-)
-LaTeX Info: Redefining \microtypecontext on input line 78.
-Package microtype Info: Applying patch `item' on input line 78.
-Package microtype Info: Applying patch `toc' on input line 78.
-Package microtype Info: Applying patch `eqnum' on input line 78.
-Package microtype Info: Applying patch `footnote' on input line 78.
-Package microtype Info: Applying patch `verbatim' on input line 78.
+\c@lstlisting=\count315
+LaTeX Info: Redefining \microtypecontext on input line 79.
+Package microtype Info: Applying patch `item' on input line 79.
+Package microtype Info: Applying patch `toc' on input line 79.
+Package microtype Info: Applying patch `eqnum' on input line 79.
+Package microtype Info: Applying patch `footnote' on input line 79.
+Package microtype Info: Applying patch `verbatim' on input line 79.
 Package microtype Info: Generating PDF output.
 Package microtype Info: Character protrusion enabled (level 2).
 Package microtype Info: Using default protrusion set `alltext'.
 Package microtype Info: Automatic font expansion enabled (level 2),
 (microtype)             stretch: 20, shrink: 20, step: 1, non-selected.
 Package microtype Info: Using default expansion set `alltext-nott'.
-LaTeX Info: Redefining \showhyphens on input line 78.
+LaTeX Info: Redefining \showhyphens on input line 79.
 Package microtype Info: No adjustment of tracking.
 Package microtype Info: No adjustment of interword spacing.
 Package microtype Info: No adjustment of character kerning.
- (/usr/share/texlive/texmf-dist/tex/latex/microtype/mt-cmr.cfg
+
+(/usr/share/texlive/texmf-dist/tex/latex/microtype/mt-cmr.cfg
 File: mt-cmr.cfg 2013/05/19 v2.2 microtype config. file: Computer Modern Roman 
 (RS)
 )
 Package caption Info: Begin \AtBeginDocument code.
 Package caption Info: End \AtBeginDocument code.
-LaTeX Font Info:    Trying to load font information for U+msa on input line 81.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 82.
 
 
 (/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsa.fd
@@ -558,7 +584,7 @@ File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 (/usr/share/texlive/texmf-dist/tex/latex/microtype/mt-msa.cfg
 File: mt-msa.cfg 2006/02/04 v1.1 microtype config. file: AMS symbols (a) (RS)
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 81.
+LaTeX Font Info:    Trying to load font information for U+msb on input line 82.
 
 
 (/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsb.fd
@@ -572,114 +598,106 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
 
-Overfull \hbox (2.49411pt too wide) in paragraph at lines 85--86
-[]\OT1/cmr/m/n/10 (-20) In this pa-per, we present \OT1/cmr/bx/n/10 (-20) Ker-n
-el-Lens\OT1/cmr/m/n/10 (-20) , an end-to-end au-to-mated com-pi-la-tion, C++/CU
-DA
- []
-
 (./architecture_report.toc [1
 
-{/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map}]
-Overfull \hbox (2.48001pt too wide) in paragraph at lines 18--18
- [][] [][][]\OT1/cmr/m/n/10.95 (-20) Step 9: Au-to-mated C++/CUDA Code Gen-er-a
--tion (\OT1/cmtt/m/n/10.95 ort[]gen.py\OT1/cmr/m/n/10.95 (-20) , \OT1/cmtt/m/n/
-10.95 trt[]gen.py\OT1/cmr/m/n/10.95 (-20) )[][] [][]  
- []
-
-
-Overfull \hbox (3.33115pt too wide) in paragraph at lines 19--19
- [][] [][][]\OT1/cmr/m/n/10.95 (-20) Step 10: 16-Byte Hard-ware Mem-ory Align-m
-ent Guard In-ser-tion (\OT1/cmtt/m/n/10.95 builder.py\OT1/cmr/m/n/10.95 (-20) )
-[][] [][]  
- []
-
-)
+{/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map}])
 \tf@toc=\write4
 \openout4 = `architecture_report.toc'.
 
- [2] [3]
-Overfull \hbox (62.00209pt too wide) in paragraph at lines 123--124
-\OT1/cmr/m/n/10.95 (-20) tion. Both run-times sup-port C++ Cus-tom Op-er-a-tor 
-APIs (\OT1/cmtt/m/n/10.95 OrtCustomOp\OT1/cmr/m/n/10.95 (-20) , \OT1/cmtt/m/n/1
-0.95 nvinfer1::IPluginV2DynamicExt\OT1/cmr/m/n/10.95 (-20) ).
+ [2]
+Overfull \hbox (45.91963pt too wide) in paragraph at lines 104--105
+[]\OT1/cmr/m/it/10.95 (-20) ONNX Ex-porter Trac-ing Break-down: \OT1/cmr/m/n/10
+.95 (-20) Stan-dard Py-Torch ONNX ex-port util-i-ties (\OT1/cmtt/m/n/10.95 torc
+h.onnx.export\OT1/cmr/m/n/10.95 (-20) )
  []
 
+(/usr/share/texlive/texmf-dist/tex/latex/listings/lstlang1.sty
+File: lstlang1.sty 2023/02/27 1.9 listings language file
+)
+(/usr/share/texlive/texmf-dist/tex/latex/listings/lstlang1.sty
+File: lstlang1.sty 2023/02/27 1.9 listings language file
+)
+Overfull \hbox (4.19037pt too wide) in paragraph at lines 116--117
+\OT1/cmr/m/n/10.95 (-20) KernelLens is pub-lished on PyPI and open-sourced on G
+itHub ([][]$\OT1/cmtt/m/n/10.95 https : / / github . com / Just1truc /
+ []
 
-Overfull \hbox (17.98706pt too wide) in paragraph at lines 148--149
+[3]
+Overfull \hbox (36.07895pt too wide) in paragraph at lines 164--165
+\OT1/cmr/m/n/10.95 (-20) Both run-times sup-port C++ Cus-tom Op-er-a-tor APIs (
+\OT1/cmtt/m/n/10.95 OrtCustomOp\OT1/cmr/m/n/10.95 (-20) , \OT1/cmtt/m/n/10.95 n
+vinfer1::IPluginV2DynamicExt\OT1/cmr/m/n/10.95 (-20) ).
+ []
+
+[4{/usr/share/texlive/texmf-dist/fonts/enc/dvips/cm-super/cm-super-ts1.enc}]
+LaTeX Font Info:    Font shape `OT1/cmtt/bx/n' in size <10> not available
+(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 189.
+
+[5]
+Overfull \hbox (17.98706pt too wide) in paragraph at lines 214--215
 []\OT1/cmr/bx/n/10.95 (-20) Compile-Time Con-stants ($C$): \OT1/cmr/m/n/10.95 (
 -20) Pa-ram-e-ters dec-o-rated with \OT1/cmtt/m/n/10.95 tl.constexpr \OT1/cmr/m
 /n/10.95 (-20) (e.g., \OT1/cmtt/m/n/10.95 BLOCK[]SIZE\OT1/cmr/m/n/10.95 (-20) ,
 
  []
 
-[4]
-Underfull \hbox (badness 10000) in paragraph at lines 168--169
-[]\OT1/cmr/bx/n/10.95 (+20) Step 2: Com-piler In-vo-ca-tion $\OMS/cmsy/m/n/10.9
-5 !$ \OT1/cmr/m/n/10.95 (+20) Call \OT1/cmtt/m/n/10.95 kl.compile(model, inputs
-,
- []
-
-
-Underfull \hbox (badness 2753) in paragraph at lines 175--176
-[]\OT1/cmr/bx/n/10.95 (+20) Step 9: Au-to-mated C++/CUDA Code Gen-er-a-tion $\O
-MS/cmsy/m/n/10.95 !$ \OT1/cmr/m/n/10.95 (+20) Syn-the-size
- []
-
-[5]
-LaTeX Font Info:    Font shape `OT1/cmtt/bx/n' in size <10.95> not available
-(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 187.
-
-Overfull \hbox (59.55971pt too wide) in paragraph at lines 188--189
-\OT1/cmr/m/n/10.95 (-20) The user calls \OT1/cmtt/m/n/10.95 kl.compile(model, s
-ample[]inputs, name="<name>", backends=["onnx", "tensorrt"])\OT1/cmr/m/n/10.95 
-(-20) .
- []
-
-
-Overfull \hbox (39.1973pt too wide) in paragraph at lines 188--189
-\OT1/cmr/m/n/10.95 (-20) Ker-nel-Lens ini-tial-izes the com-piler con-text, cre
--ates tar-get cache di-rec-to-ries un-der \OT1/cmtt/m/n/10.95 KERNEL[]LENS[]CAC
-HE[]DIR\OT1/cmr/m/n/10.95 (-20) ,
- []
-
-
-Overfull \hbox (30.78563pt too wide) in paragraph at lines 206--206
-[]\OT1/cmr/bx/n/10.95 (-20) Step 5: Static AST In-spec-tion of Main & Nested He
-lper Func-tions (\OT1/cmtt/m/n/10.95 ast[]analyzer.py\OT1/cmr/bx/n/10.95 (-20) 
-) 
+<fig1_architecture.png, id=280, 1004.553pt x 570.933pt>
+File: fig1_architecture.png Graphic file (type png)
+<use fig1_architecture.png>
+Package pdftex.def Info: fig1_architecture.png  used on input line 229.
+(pdftex.def)             Requested size: 452.9679pt x 257.44017pt.
+[6 <./fig1_architecture.png>]
+Overfull \hbox (11.43pt too wide) in paragraph at lines 241--242
+\OT1/cmr/m/n/10.95 (-20) (\OT1/cmtt/m/n/10.95 triton.compiler.CompiledKernel\OT
+1/cmr/m/n/10.95 (-20) ), it in-ter-cepts the com-piled PTX as-sem-bly string (\
+OT1/cmtt/m/n/10.95 .target
  []
 
 (/usr/share/texlive/texmf-dist/tex/latex/listings/lstlang1.sty
 File: lstlang1.sty 2023/02/27 1.9 listings language file
 )
 LaTeX Font Info:    Font shape `OT1/cmtt/bx/n' in size <9> not available
-(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 211.
- [6{/usr/share/texlive/texmf-dist/fonts/enc/dvips/cm-super/cm-super-ts1.enc}]
-Overfull \hbox (1.70111pt too wide) in paragraph at lines 267--267
-[]\OT1/cmr/bx/n/10.95 (-20) Step 10: 16-Byte Hard-ware Mem-ory Align-ment Guard
- In-ser-tion (\OT1/cmtt/m/n/10.95 builder.py\OT1/cmr/bx/n/10.95 (-20) ) 
+(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 252.
+
+Overfull \hbox (96.42868pt too wide) in paragraph at lines 272--273
+[]\OT1/cmr/m/it/10.95 (-20) Base ONNX Ex-port & Node In-jec-tion (\OT1/cmtt/m/i
+t/10.95 onnx[]exporter.py\OT1/cmr/m/it/10.95 (-20) ): \OT1/cmr/m/n/10.95 (-20) 
+Ker-nel-Lens reg-is-ters the \OT1/cmtt/m/n/10.95 TritonGlobalONNXExporter
  []
 
 [7]
-Overfull \hbox (15.52809pt too wide) in paragraph at lines 271--272
-\OT1/cmr/m/n/10.95 (-20) KernelLens au-to-mat-i-cally ac-quires ONNX Run-time h
-ead-ers (\OT1/cmtt/m/n/10.95 onnxruntime-linux-x64-gpu-1.20.1\OT1/cmr/m/n/10.95
- (-20) )
+Overfull \hbox (21.04271pt too wide) in paragraph at lines 299--300
+\OT1/cmr/m/n/10.95 (-20) na-tive \OT1/cmtt/m/n/10.95 .target sm[]120a \OT1/cmr/
+m/n/10.95 (-20) hard-ware in-struc-tions, re-solv-ing \OT1/cmtt/m/n/10.95 CUDA[
+]ERROR[]UNSUPPORTED[]PTX[]VERSION
  []
 
 
-Overfull \hbox (9.5308pt too wide) detected at line 287
+Overfull \hbox (67.94882pt too wide) in paragraph at lines 301--302
+[]\OT1/cmr/m/it/10.95 (-20) Toolchain Hard-en-ing & Stack Se-cu-rity: \OT1/cmr/
+m/n/10.95 (-20) C++ plu-gin \OT1/cmtt/m/n/10.95 initialize() \OT1/cmr/m/n/10.95
+ (-20) calls in-voke \OT1/cmtt/m/n/10.95 cuDevicePrimaryCtxRetain
+ []
+
+
+Overfull \hbox (2.83093pt too wide) in paragraph at lines 301--302
+\OT1/cmr/m/n/10.95 (-20) and \OT1/cmtt/m/n/10.95 cuCtxSetCurrent \OT1/cmr/m/n/1
+0.95 (-20) to pre-vent CUDA con-text de-tach-ment (\OT1/cmtt/m/n/10.95 CUDA[]ER
+ROR[]INVALID[]CONTEXT\OT1/cmr/m/n/10.95 (-20) ).
+ []
+
+[8]
+Overfull \hbox (9.5308pt too wide) detected at line 322
 [][][][][] \OMS/cmsy/m/n/10.95 2 [][]\OML/cmm/m/it/10.95 ;  [];  [];  [][]
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 326--326
+Underfull \hbox (badness 10000) in paragraph at lines 361--361
 []\OT1/cmr/m/n/10 (+20) Allocate tem-po-rary 16-byte aligned stag-ing buffer on
  GPU VRAM:
  []
 
-[8] (/usr/share/texlive/texmf-dist/tex/latex/listings/lstlang1.sty
+(/usr/share/texlive/texmf-dist/tex/latex/listings/lstlang1.sty
 File: lstlang1.sty 2023/02/27 1.9 listings language file
 )
 (/usr/share/texlive/texmf-dist/tex/latex/listings/lstlang1.sty
@@ -687,40 +705,40 @@ File: lstlang1.sty 2023/02/27 1.9 listings language file
 )
 (/usr/share/texlive/texmf-dist/tex/latex/listings/lstmisc.sty
 File: lstmisc.sty 2023/02/27 1.9 (Carsten Heinz)
-)
+) [9]
 LaTeX Font Info:    Font shape `OT1/cmtt/bx/n' in size <12> not available
-(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 365.
- [9] [10]
-Overfull \hbox (114.07623pt too wide) in paragraph at lines 444--457
- [][] 
- []
-
-
-Overfull \hbox (165.99832pt too wide) in paragraph at lines 470--482
- [][] 
- []
-
+(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 400.
+ [10]
 
 LaTeX Warning: `!h' float specifier changed to `!ht'.
 
-[11]
-Underfull \hbox (badness 10000) in paragraph at lines 495--496
-[]|\OT1/cmr/m/it/10.95 (+20) Use this struc-ture to cre-ate Fig-ure 2 in Ex-cal
-idraw (or run \OT1/cmtt/m/it/10.95 python3
+[11] [12] [13]
+Overfull \hbox (55.30518pt too wide) in paragraph at lines 603--604
+\OT1/cmr/m/n/10.95 (-20) into C++ SymPy in-te-ger math eval-u-ated in-side \OT1
+/cmtt/m/n/10.95 nvinfer1::IPluginV2DynamicExt::getOutputDimensions
  []
 
-[12] [13] [14] (./architecture_report.aux)
+<fig2_benchmarks.png, id=443, 860.013pt x 462.528pt>
+File: fig2_benchmarks.png Graphic file (type png)
+<use fig2_benchmarks.png>
+Package pdftex.def Info: fig2_benchmarks.png  used on input line 629.
+(pdftex.def)             Requested size: 430.31812pt x 231.4328pt.
+
+LaTeX Warning: `!h' float specifier changed to `!ht'.
+
+[14] [15 <./fig2_benchmarks.png>] [16] [17] [18] [19]
+(./architecture_report.aux)
 Package rerunfilecheck Info: File `architecture_report.out' has not changed.
-(rerunfilecheck)             Checksum: 68769CFBEC3F0E62BBA70490A1BEB3DA;10611.
+(rerunfilecheck)             Checksum: 082B1C15AACF0EA44B5D014DEADE2C61;11776.
  ) 
 Here is how much of TeX's memory you used:
- 16913 strings out of 477985
- 262937 string characters out of 5839381
- 2108388 words of memory out of 6000000
- 36487 multiletter control sequences out of 15000+600000
- 533190 words of font info for 200 fonts, out of 8000000 for 9000
+ 17461 strings out of 477985
+ 271744 string characters out of 5839381
+ 2232388 words of memory out of 6000000
+ 36935 multiletter control sequences out of 15000+600000
+ 536461 words of font info for 222 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 75i,14n,76p,1297b,1387s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,17n,76p,1016b,2198s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></us
 r/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></usr/shar
 e/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx8.pfb></usr/share/texli
@@ -739,13 +757,14 @@ texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></usr/share/texlive/texmf-
 dist/fonts/type1/public/amsfonts/cm/cmti12.pfb></usr/share/texlive/texmf-dist/f
 onts/type1/public/amsfonts/cm/cmtt10.pfb></usr/share/texlive/texmf-dist/fonts/t
 ype1/public/amsfonts/cm/cmtt12.pfb></usr/share/texlive/texmf-dist/fonts/type1/p
-ublic/amsfonts/cm/cmtt9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/c
-m-super/sfrm1000.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/cm-super
-/sfrm1095.pfb>
-Output written on architecture_report.pdf (14 pages, 350564 bytes).
+ublic/amsfonts/cm/cmtt9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/a
+msfonts/symbols/msam10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/cm
+-super/sfrm1000.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/cm-super/
+sfrm1095.pfb>
+Output written on architecture_report.pdf (19 pages, 1014922 bytes).
 PDF statistics:
- 558 PDF objects out of 1000 (max. 8388607)
- 493 compressed objects within 5 object streams
- 198 named destinations out of 1000 (max. 500000)
- 53009 words of extra memory for PDF output out of 61914 (max. 10000000)
+ 658 PDF objects out of 1000 (max. 8388607)
+ 581 compressed objects within 6 object streams
+ 232 named destinations out of 1000 (max. 500000)
+ 59187 words of extra memory for PDF output out of 61914 (max. 10000000)
 

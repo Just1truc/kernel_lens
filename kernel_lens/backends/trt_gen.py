@@ -491,93 +491,52 @@ const char* {plugin_name}Creator::getPluginNamespace() const noexcept {{ return 
 
 
 }} // namespace {self.plugin_namespace}_{manifest.kernel_name}
-
-extern "C" {{
-    __attribute__((visibility("default"))) nvinfer1::IPluginCreator* const* getPluginCreators(int32_t& nbCreators) {{
-        static auto* creator = new {self.plugin_namespace}_{manifest.kernel_name}::{plugin_name}Creator();
-        static nvinfer1::IPluginCreator* const creators[] = {{ creator }};
-        nbCreators = 1;
-        return creators;
-    }}
-
-    __attribute__((visibility("default"))) bool register_triton_plugins_explicit() {{
-        static bool g_registered = false;
-        if (g_registered) return true;
-        auto* registry = ::getPluginRegistry();
-        if (registry != nullptr) {{
-            auto* creator1 = new {self.plugin_namespace}_{manifest.kernel_name}::{plugin_name}Creator();
-            creator1->setPluginNamespace("triton_custom");
-            registry->registerCreator(*creator1, "triton_custom");
-
-            struct AliasCreator : public {self.plugin_namespace}_{manifest.kernel_name}::{plugin_name}Creator {{
-                const char* getPluginName() const noexcept override {{ return "{manifest.kernel_name}triton_custom"; }}
-            }};
-            auto* creator2 = new AliasCreator();
-            creator2->setPluginNamespace("triton_custom");
-            registry->registerCreator(*creator2, "triton_custom");
-
-            g_registered = true;
-            return true;
-        }}
-        return false;
-    }}
-
-
-
-
-    __attribute__((visibility("default"))) bool initLibNvInferPlugins(void* logger, const char* libNamespace) {{
-        return register_triton_plugins_explicit();
-    }}
-}}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 '''
         return textwrap.dedent(tpl).strip()
     
     def generate(self) -> Dict[str, str]:
         files = {}
+        seen_kernels = set()
+        unique_manifests = []
         for m in self.manifests:
-            files[f"{m.kernel_name}Plugin.h"] = self._generate_kernel_h(m)
-            files[f"{m.kernel_name}Plugin.cu"] = self._generate_kernel_cu(m)
+            if m.kernel_name not in seen_kernels:
+                seen_kernels.add(m.kernel_name)
+                unique_manifests.append(m)
+                files[f"{m.kernel_name}Plugin.h"] = self._generate_kernel_h(m)
+                files[f"{m.kernel_name}Plugin.cu"] = self._generate_kernel_cu(m)
+        
+        reg_cpp = '#include <NvInferRuntime.h>\n'
+        for m in unique_manifests:
+            reg_cpp += f'#include "{m.kernel_name}Plugin.h"\n'
+        
+        reg_cpp += '''
+extern "C" {
+    __attribute__((visibility("default"))) bool register_triton_plugins_explicit() {
+        static bool g_registered = false;
+        if (g_registered) return true;
+        auto* registry = ::getPluginRegistry();
+        if (registry != nullptr) {
+'''
+        for m in unique_manifests:
+            plugin_name = f"{m.kernel_name}Plugin"
+            ns = f"{self.plugin_namespace}_{m.kernel_name}"
+            reg_cpp += f'            auto* creator_{m.kernel_name} = new {ns}::{plugin_name}Creator();\n'
+            reg_cpp += f'            creator_{m.kernel_name}->setPluginNamespace("triton_custom");\n'
+            reg_cpp += f'            registry->registerCreator(*creator_{m.kernel_name}, "triton_custom");\n'
+
+        reg_cpp += '''
+            g_registered = true;
+            return true;
+        }
+        return false;
+    }
+
+    __attribute__((visibility("default"))) bool initLibNvInferPlugins(void* logger, const char* libNamespace) {
+        return register_triton_plugins_explicit();
+    }
+}
+'''
+        files["register_plugins.cpp"] = reg_cpp
         return files
 
 def generate_trt_bindings(manifests: List[KernelManifest], output_dir: str):

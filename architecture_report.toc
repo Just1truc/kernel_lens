@@ -1,35 +1,39 @@
 \contentsline {section}{\numberline {1}Introduction}{3}{section.1}%
+\contentsline {subsection}{\numberline {1.1}Installation \& Setup}{3}{subsection.1.1}%
+\contentsline {subsection}{\numberline {1.2}The Core Value Proposition: Full Graph Optimizations with Custom Triton Kernels}{4}{subsection.1.2}%
 \contentsline {section}{\numberline {2}Related Work}{4}{section.2}%
 \contentsline {subsection}{\numberline {2.1}PyTorch Compiler \& Inductor}{4}{subsection.2.1}%
-\contentsline {subsection}{\numberline {2.2}ONNX \& Enterprise Inference Runtimes}{4}{subsection.2.2}%
-\contentsline {subsection}{\numberline {2.3}Triton-Based LLM Kernel Libraries}{4}{subsection.2.3}%
-\contentsline {section}{\numberline {3}Anatomy of a Triton Kernel \& Parameter Taxonomy}{4}{section.3}%
-\contentsline {subsection}{\numberline {3.1}What a Triton Kernel Requires: Formal Parameter Taxonomy}{4}{subsection.3.1}%
-\contentsline {section}{\numberline {4}Complete 12-Step KernelLens Compiler Architecture}{5}{section.4}%
-\contentsline {subsection}{\numberline {4.1}Detailed Breakdown of the 12 Pipeline Steps}{6}{subsection.4.1}%
-\contentsline {subsubsection}{\numberline {4.1.1}Step 1: User Module \& Kernel Definition}{6}{subsubsection.4.1.1}%
-\contentsline {subsubsection}{\numberline {4.1.2}Step 2: Compiler Invocation (\texttt {kl.compile})}{6}{subsubsection.4.1.2}%
-\contentsline {subsubsection}{\numberline {4.1.3}Step 3: Pass 1 -- Concrete Eager Execution \& Artifact Interception (\texttt {tracer.py})}{6}{subsubsection.4.1.3}%
-\contentsline {subsubsection}{\numberline {4.1.4}Step 4: Pass 2 -- Symbolic FX Proxy Tracing \& SymPy Grid Extraction (\texttt {tracer.py})}{6}{subsubsection.4.1.4}%
-\contentsline {subsubsection}{\numberline {4.1.5}Step 5: Static AST Inspection of Main \& Nested Helper Functions (\texttt {ast\_analyzer.py})}{6}{subsubsection.4.1.5}%
-\contentsline {subsubsection}{\numberline {4.1.6}Step 6: Manifest Assembly \& Validation (\texttt {manifest.py})}{7}{subsubsection.4.1.6}%
-\contentsline {subsubsection}{\numberline {4.1.7}Step 7: Base ONNX Graph Export \& Domain Custom Node Injection (\texttt {onnx\_exporter.py})}{7}{subsubsection.4.1.7}%
-\contentsline {subsubsection}{\numberline {4.1.8}Step 8: Dynamic Host-Side CPU Scalar Binding (\texttt {OrtMemTypeCPUInput})}{7}{subsubsection.4.1.8}%
-\contentsline {subsubsection}{\numberline {4.1.9}Step 9: Automated C++/CUDA Code Generation (\texttt {ort\_gen.py}, \texttt {trt\_gen.py})}{7}{subsubsection.4.1.9}%
-\contentsline {subsubsection}{\numberline {4.1.10}Step 10: 16-Byte Hardware Memory Alignment Guard Insertion (\texttt {builder.py})}{8}{subsubsection.4.1.10}%
-\contentsline {subsubsection}{\numberline {4.1.11}Step 11: Native C++ Shared Library Compilation (\texttt {builder.py})}{8}{subsubsection.4.1.11}%
-\contentsline {subsubsection}{\numberline {4.1.12}Step 12: Dynamic Plugin Registration \& Zero-Copy Runtime Execution (\texttt {engine.py})}{8}{subsubsection.4.1.12}%
-\contentsline {section}{\numberline {5}16-Byte Memory Alignment Guards \& Zero-Copy Runtime}{8}{section.5}%
-\contentsline {subsection}{\numberline {5.1}128-Bit SIMD Memory Vectorization in GPU Hardware}{8}{subsection.5.1}%
-\contentsline {subsubsection}{\numberline {5.1.1}Mechanics of Hardware Alignment Traps (CUDA Error 716)}{8}{subsubsection.5.1.1}%
+\contentsline {subsection}{\numberline {2.2}ONNX \& Enterprise Inference Runtimes}{5}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Triton-Based LLM Kernel Libraries}{5}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.4}Comparative System Analysis: KernelLens vs. Upstream Tools}{5}{subsection.2.4}%
+\contentsline {section}{\numberline {3}Anatomy of a Triton Kernel \& Parameter Taxonomy}{5}{section.3}%
+\contentsline {subsection}{\numberline {3.1}What a Triton Kernel Requires: Formal Parameter Taxonomy}{5}{subsection.3.1}%
+\contentsline {section}{\numberline {4}Consolidated 4-Phase KernelLens Compiler Architecture}{6}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Detailed Breakdown of the 4 Pipeline Phases}{7}{subsection.4.1}%
+\contentsline {subsubsection}{\numberline {4.1.1}Phase 1: Dual-Pass Tracing \& AST Inspection (Analysis \& Manifest Assembly)}{7}{subsubsection.4.1.1}%
+\contentsline {subsubsection}{\numberline {4.1.2}Phase 2: Base ONNX Graph Export \& Custom Node Injection (Graph Transformation)}{7}{subsubsection.4.1.2}%
+\contentsline {subsubsection}{\numberline {4.1.3}Phase 3: Automated C++/CUDA Code Synthesis \& Hardening (Code Synthesis \& Compilation)}{8}{subsubsection.4.1.3}%
+\contentsline {subsubsection}{\numberline {4.1.4}Phase 4: Zero-Copy Runtime Execution \& Pointer Binding (Runtime Execution)}{8}{subsubsection.4.1.4}%
+\contentsline {section}{\numberline {5}16-Byte Memory Alignment Guards \& Zero-Copy Runtime}{9}{section.5}%
+\contentsline {subsection}{\numberline {5.1}128-Bit SIMD Memory Vectorization in GPU Hardware}{9}{subsection.5.1}%
+\contentsline {subsubsection}{\numberline {5.1.1}Mechanics of Hardware Alignment Traps (CUDA Error 716)}{9}{subsubsection.5.1.1}%
 \contentsline {subsection}{\numberline {5.2}Automated C++ Alignment Guard \& Dynamic Staging Engine}{9}{subsection.5.2}%
 \contentsline {subsection}{\numberline {5.3}Zero-Copy Runtime IO Binding Engine (\texttt {engine.py})}{10}{subsection.5.3}%
 \contentsline {subsubsection}{\numberline {5.3.1}1. ONNX Runtime IO Binding}{10}{subsubsection.5.3.1}%
-\contentsline {subsubsection}{\numberline {5.3.2}2. TensorRT Zero-Copy Pointer Registration}{10}{subsubsection.5.3.2}%
+\contentsline {subsubsection}{\numberline {5.3.2}2. TensorRT Zero-Copy Pointer Registration}{11}{subsubsection.5.3.2}%
 \contentsline {section}{\numberline {6}Experiments \& Empirical Results}{11}{section.6}%
 \contentsline {subsection}{\numberline {6.1}Benchmark Experimental Setup}{11}{subsection.6.1}%
 \contentsline {subsection}{\numberline {6.2}Numerical Parity \& Accuracy Results}{11}{subsection.6.2}%
-\contentsline {subsection}{\numberline {6.3}Empirical GPU Execution Latency Benchmark}{11}{subsection.6.3}%
-\contentsline {paragraph}{Analysis of Performance Wins \& Architectural Bottlenecks:}{11}{section*.5}%
-\contentsline {section}{\numberline {7}Future Work}{13}{section.7}%
-\contentsline {section}{\numberline {8}Conclusion}{13}{section.8}%
+\contentsline {subsection}{\numberline {6.3}Empirical GPU Execution Latency Benchmark}{12}{subsection.6.3}%
+\contentsline {subsection}{\numberline {6.4}FP8 \& Sub-Byte (INT4/INT8) Quantization Evaluation on NVIDIA RTX 5060 Ti GPU}{12}{subsection.6.4}%
+\contentsline {paragraph}{Quantization Performance Insights:}{13}{section*.9}%
+\contentsline {paragraph}{Analysis of Performance Wins \& Architectural Bottlenecks:}{13}{section*.10}%
+\contentsline {subsection}{\numberline {6.5}End-to-End Model Benchmarks: LLaMA 3 8B Full Pipeline}{13}{subsection.6.5}%
+\contentsline {subsection}{\numberline {6.6}Dynamic Batching \& Dynamic Shape Evaluation}{14}{subsection.6.6}%
+\contentsline {section}{\numberline {7}Future Work \& Architectural Roadmap}{15}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Distributed Multi-GPU Tensor Parallelism \& Embedded NCCL Synchronization}{15}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Native Blackwell Architecture (\texttt {sm\_120a}) \& PTX ISA 9.x Hardware Acceleration}{16}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Dynamic Auto-Tuning Meta-Parameter Dispatch \& Runtime Re-JIT}{16}{subsection.7.3}%
+\contentsline {subsection}{\numberline {7.4}Cross-Platform Heterogeneous Targets: Apple Metal \& WebGPU Compute}{16}{subsection.7.4}%
+\contentsline {subsection}{\numberline {7.5}Formal Verification \& SMT-Based Kernel Safety Proving}{17}{subsection.7.5}%
+\contentsline {section}{\numberline {8}Conclusion}{17}{section.8}%

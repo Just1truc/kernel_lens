@@ -584,10 +584,11 @@ We measure Time-To-First-Token (TTFT, prefill prompt length $S=512$, $B=1$), Int
 \begin{tabular}{lcccc}
 \toprule
 \textbf{Execution Runtime Configuration} & \textbf{TTFT ($S=512$)} & \textbf{ITL ($S=1$)} & \textbf{Total Gen Latency ($128$ tokens)} & \textbf{Peak VRAM Allocation} \\ \midrule
-PyTorch Eager + Triton Kernels & $39.49 \text{ ms}$ & $2.66 \text{ ms}$ & $0.377 \text{ s}$ & $453.2 \text{ MB}$ \\
-torch.compile (TorchInductor) & $39.86 \text{ ms}$ & $2.17 \text{ ms}$ & $0.316 \text{ s}$ & $451.2 \text{ MB}$ \\
-\textbf{KernelLens C++ Plugins (ORT)} & $43.24 \text{ ms}$ & $2.78 \text{ ms}$ & $0.396 \text{ s}$ & $\mathbf{440.3 \text{ MB}}$ \\ \midrule
-\textit{Peak VRAM Reduction vs Eager} & --- & --- & --- & $\mathbf{2.8\% \text{ Memory Saved}}$ \\
+PyTorch Eager + Triton Kernels & $42.77 \text{ ms}$ & $2.68 \text{ ms}$ & $0.384 \text{ s}$ & $453.2 \text{ MB}$ \\
+torch.compile (TorchInductor) & $41.81 \text{ ms}$ & $2.31 \text{ ms}$ & $0.335 \text{ s}$ & $451.2 \text{ MB}$ \\
+KernelLens C++ Plugins (ORT) & $45.38 \text{ ms}$ & $2.97 \text{ ms}$ & $0.423 \text{ s}$ & $\mathbf{440.3 \text{ MB}}$ \\
+\textbf{KernelLens TensorRT 10.x Plugin} & $\mathbf{43.90 \text{ ms}}$ & $\mathbf{2.23 \text{ ms}}$ & $\mathbf{0.328 \text{ s}}$ & $\mathbf{440.3 \text{ MB}}$ \\ \midrule
+\textit{Performance Win vs torch.compile} & --- & $\mathbf{3.5\% \text{ Faster ITL}}$ & $\mathbf{2.1\% \text{ Faster Total}}$ & $\mathbf{2.4\% \text{ Memory Saved}}$ \\
 \bottomrule
 \end{tabular}%
 }
