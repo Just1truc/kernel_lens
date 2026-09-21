@@ -557,17 +557,65 @@ INT4 W4A16 GEMM ($2048 \times 4096$) & \texttt{int4 / uint8} & $1.39 \text{ ms}$
 ---
 
 % =========================================================================
-\section{Future Work}
+\section{Future Work \& Architectural Roadmap}
 % =========================================================================
 
-While KernelLens automates single-GPU Triton kernel compilation to ONNX Runtime and TensorRT C++ plugins, several promising directions remain for future research:
+While KernelLens v1.1.9 successfully automates single-GPU Triton kernel compilation and deployment to enterprise C++ inference engines (ONNX Runtime and NVIDIA TensorRT 10.16), several major architectural frontiers present exciting opportunities for future research and compiler evolution.
 
-\begin{enumerate}
-    \item \textbf{Multi-GPU NCCL \& Tensor Parallelism Integration:} Extending KernelLens graph tracing to capture multi-GPU communication primitives (\texttt{all\_reduce}, \texttt{all\_gather}) and emit C++ plugins with embedded NCCL stream synchronization.
-    \item \textbf{Dynamic Auto-Tuning Meta-Parameter Propagation:} Propagating Triton autotuning meta-parameters (\texttt{num\_warps}, \texttt{num\_stages}, \texttt{BLOCK\_SIZE}) as dynamic runtime options inside compiled C++ shared libraries.
-    \item \textbf{Automated FP8 / INT4 Quantized PTX Transmutations:} Synthesizing C++ plugins that perform on-the-fly FP8 (\texttt{e4m3fn} / \texttt{e5m2}) and INT4 bit-packing data conversions prior to launching PTX kernels.
-    \item \textbf{Cross-Target Hardware Backends:} Extending KernelLens backend code generators to emit Apple Metal (MSL) and WebGPU Compute Shaders, enabling Triton kernel execution on mobile and browser targets.
+\subsection{Distributed Multi-GPU Tensor Parallelism \& Embedded NCCL Synchronization}
+
+Current inference workloads for trillion-parameter LLMs (e.g., LLaMA 3.1 405B, DeepSeek-V3) rely on multi-GPU Tensor Parallelism (TP) and Pipeline Parallelism (PP). When custom Triton kernels are invoked across distributed GPU nodes, communication primitives such as \texttt{all\_reduce}, \texttt{all\_gather}, and \texttt{reduce\_scatter} are interspersed between computation blocks.
+
+We plan to extend KernelLens's symbolic tracing engine (\texttt{tracer.py}) to intercept distributed PyTorch communication calls (\texttt{torch.distributed}) and synthesize C++ plugins with embedded NVIDIA Collective Communications Library (\texttt{NCCL}) stream handles. Specifically, the generated C++ plugin will instantiate communicators (\texttt{ncclComm\_t}) and execute zero-copy intra-node Inter-Process Communication (\texttt{CUDA IPC}) or inter-node InfiniBand RDMA transfers directly inside ONNX Runtime and TensorRT execution contexts:
+
+\begin{equation}
+T_{\text{distributed}} = T_{\text{cuLaunchKernel}} + T_{\text{ncclAllReduceAsync}} \quad \Big(\text{Stream-overlapped C++ execution}\Big)
+\end{equation}
+
+By unifying kernel launch and collective communication within a single compiled C++ operator, KernelLens will eliminate Python GIL contention and host-side process barrier latencies across large-scale inference clusters.
+
+\subsection{Native Blackwell Architecture (\texttt{sm\_120a}) \& PTX ISA 9.x Hardware Acceleration}
+
+The NVIDIA Blackwell architecture introduces hardware features tailored for extreme-scale AI workloads, including 2nd-Generation Transformer Engines, Asynchronous Transaction Barriers (\texttt{mbarrier}), and Programmatic Cluster Launches (\texttt{cuLaunchKernelEx}). 
+
+While KernelLens v1.1.9 incorporates dynamic PTX version header clamping (\texttt{.version 9.3} $\rightarrow$ \texttt{.version 9.0}) to ensure compatibility with CUDA 13.0 driver JIT parsers, future iterations will feature a dedicated Blackwell Backend Target Generator (\texttt{blackwell\_gen.py}). This backend will:
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Synthesize Cluster Launch Descriptors:} Generate \texttt{CUlaunchAttribute} arrays specifying Thread Block Cluster dimensions (\texttt{cluster\_dim\_x}, \texttt{cluster\_dim\_y}) directly in C++ plugin launcher code.
+    \item \textbf{Asynchronous Shared Memory Copying (\texttt{cp.async.bulk}):} Leverage Blackwell-native bulk tensor asynchronous copy instructions to stream data directly from global VRAM into Distributed Shared Memory (DSMEM) across SM clusters.
+    \item \textbf{Micro-Exponent Quantization (NVFP4 \& MXFP6):} Provide native bit-packing and un-packing C++ header routines for 4-bit and 6-bit Micro-Scaling Formats (MXFP4 / MXFP6) defined in OCP specification standards.
 \end{enumerate}
+
+\subsection{Dynamic Auto-Tuning Meta-Parameter Dispatch \& Runtime Re-JIT}
+
+OpenAI Triton allows developers to specify auto-tuning configurations via \texttt{@triton.autotune}, varying launch parameters such as \texttt{num\_warps}, \texttt{num\_stages}, \texttt{BLOCK\_SIZE\_M}, and \texttt{BLOCK\_SIZE\_N} based on input matrix dimensions. Currently, KernelLens compiles a single concrete PTX artifact corresponding to the sample input shapes provided during \texttt{kl.compile()}.
+
+To support dynamic multi-shape batch inference without performance degradation, KernelLens will introduce a \textbf{Multi-Variant PTX Dispatch Engine}:
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Multi-Artifact Compilation:} Pass 1 eager execution will profile and collect optimized PTX bytecode artifacts across a spectrum of candidate tensor dimensions $N \in [1, 8192]$.
+    \item \textbf{Dynamic C++ Dispatch Table:} Generated C++ plugins will embed a lightweight runtime decision tree that selects the optimal PTX module handle (\texttt{CUmodule}) and thread block geometry based on live input tensor shapes at $O(1)$ runtime cost:
+    \begin{equation}
+    \text{ModuleHandle} = \text{DispatchTable}\Big(\text{shape}[0], \text{shape}[1]\Big)
+    \end{equation}
+\end{itemize}
+
+\subsection{Cross-Platform Heterogeneous Targets: Apple Metal \& WebGPU Compute}
+
+To democratize custom Triton kernel execution beyond NVIDIA CUDA GPUs, we plan to extend KernelLens's backend code generation layer to non-CUDA hardware ecosystems:
+
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Apple Metal Shading Language (MSL) Backend:} Transpiling Triton LLVM Intermediate Representation (IR) into MSL compute shaders targeting Apple Silicon M-series Unified Memory Architecture (UMA), enabling low-power local LLM inference on macOS and iOS devices.
+    \item \textbf{WebGPU / WGSL Backend:} Compiling Triton kernels to WebGPU Shading Language (WGSL) for zero-installation, high-throughput client-side AI inference within web browsers.
+\end{enumerate}
+
+\subsection{Formal Verification \& SMT-Based Kernel Safety Proving}
+
+High-performance C++ inference runtimes operate in mission-critical production environments where memory safety is paramount. We aim to integrate a Satisfiability Modulo Theories (\textbf{SMT}) formal verification module powered by the Z3 Solver into KernelLens's manifest validation step (\texttt{validate\_manifests}).
+
+The formal verification solver will inspect compiled PTX assembly and SymPy grid launch expressions to mathematically prove:
+\begin{equation}
+\forall (x, y, z) \in \text{Grid}, \quad 0 \le \text{Offset}(x,y,z) < \text{BufferSize}
+\end{equation}
+This will guarantee the absolute absence of out-of-bounds VRAM access, warp divergence deadlock traps, and hardware memory alignment exceptions prior to C++ shared library compilation.
 
 ---
 
