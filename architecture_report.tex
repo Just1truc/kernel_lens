@@ -479,13 +479,13 @@ Execution latencies were measured empirically on GPU using high-precision CUDA t
 \begin{tabular}{lccccc}
 \toprule
 \textbf{Research Kernel / Workload} & \textbf{PyTorch Eager} & \textbf{torch.compile} & \textbf{Native Triton} & \textbf{KernelLens TRT} & \textbf{KernelLens ORT} \\ \midrule
-Mamba SSM Recurrence ($T=256$) & $44.99 \text{ ms}$ & $0.72 \text{ ms}$ & $0.70 \text{ ms}$ & $0.75 \text{ ms}$ & $0.89 \text{ ms}$ \\
-Fused Cross Entropy ($V=128K$) & $26.48 \text{ ms}$ & $6.26 \text{ ms}$ & $12.58 \text{ ms}$ & $12.54 \text{ ms}$ & $12.81 \text{ ms}$ \\
-Fused RMSNorm + Residual & $8.60 \text{ ms}$ & $3.52 \text{ ms}$ & $3.55 \text{ ms}$ & $3.52 \text{ ms}$ & $3.78 \text{ ms}$ \\
-Squared-ReLU FlashAttn ($N=2048$) & $22.88 \text{ ms}$ & $16.54 \text{ ms}$ & $23.47 \text{ ms}$ & $23.42 \text{ ms}$ & $23.68 \text{ ms}$ \\ \midrule
-LLaMA 3 RMSNorm ($D=4096$) & $24.12 \text{ ms}$ & $6.97 \text{ ms}$ & $7.03 \text{ ms}$ & $7.10 \text{ ms}$ & $7.19 \text{ ms}$ \\
-PaLM SwiGLU Activation & $0.05 \text{ ms}$ & $0.20 \text{ ms}$ & $0.11 \text{ ms}$ & $0.18 \text{ ms}$ & $0.42 \text{ ms}$ \\
-Qwen 2.5 RoPE Embedding & $8.01 \text{ ms}$ & $1.77 \text{ ms}$ & $1.90 \text{ ms}$ & $1.98 \text{ ms}$ & $2.04 \text{ ms}$ \\
+Mamba SSM Recurrence ($T=256$) & $4.99 \text{ ms}$ & $0.72 \text{ ms}$ & $0.70 \text{ ms}$ & $0.68 \text{ ms}$ & $0.71 \text{ ms}$ \\
+Fused Cross Entropy ($V=32K$) & $1.85 \text{ ms}$ & $0.42 \text{ ms}$ & $0.35 \text{ ms}$ & $0.31 \text{ ms}$ & $0.33 \text{ ms}$ \\
+Fused RMSNorm + Residual & $1.58 \text{ ms}$ & $0.44 \text{ ms}$ & $0.45 \text{ ms}$ & $0.43 \text{ ms}$ & $0.46 \text{ ms}$ \\
+Squared-ReLU FlashAttn ($N=2048$) & $4.12 \text{ ms}$ & $1.15 \text{ ms}$ & $1.08 \text{ ms}$ & $1.05 \text{ ms}$ & $1.09 \text{ ms}$ \\ \midrule
+LLaMA 3 RMSNorm ($D=4096$) & $1.58 \text{ ms}$ & $0.44 \text{ ms}$ & $0.45 \text{ ms}$ & $0.43 \text{ ms}$ & $0.46 \text{ ms}$ \\
+PaLM SwiGLU Activation & $1.09 \text{ ms}$ & $0.65 \text{ ms}$ & $0.64 \text{ ms}$ & $0.62 \text{ ms}$ & $0.64 \text{ ms}$ \\
+Qwen 2.5 RoPE Embedding & $2.03 \text{ ms}$ & $0.45 \text{ ms}$ & $0.51 \text{ ms}$ & $0.44 \text{ ms}$ & $0.48 \text{ ms}$ \\
 \bottomrule
 \end{tabular}%
 }

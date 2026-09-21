@@ -197,14 +197,15 @@ def benchmark_all():
     results = {}
     
     # --- Operator 1: RMSNorm ---
-    B, M, N = 64, 512, 4096
+    B, M, N = 4, 512, 4096
     x = torch.randn(B, M, N, device="cuda", dtype=torch.float32)
     mod_rmsnorm = RMSNormModule(N).cuda()
     compiled_rmsnorm = kl.compile(mod_rmsnorm, (x,), name="Bench_RMSNorm", backends=["onnx"])
     
-    # Warmup torch.compile
+    # Warmup torch.compile & ORT
     compiled_ref_rmsnorm = torch.compile(lambda inp: ref_rmsnorm(inp, mod_rmsnorm.weight))
-    for _ in range(10): compiled_ref_rmsnorm(x)
+    for _ in range(20): compiled_ref_rmsnorm(x)
+    for _ in range(20): compiled_rmsnorm.run((x,), backend="onnx")
     
     lat_eager_rms = time_fn(ref_rmsnorm, (x, mod_rmsnorm.weight))
     lat_tc_rms = time_fn(compiled_ref_rmsnorm, (x,))
@@ -219,13 +220,14 @@ def benchmark_all():
     }
     
     # --- Operator 2: SwiGLU ---
-    gate = torch.randn(64, 4096, device="cuda", dtype=torch.float32)
-    up = torch.randn(64, 4096, device="cuda", dtype=torch.float32)
+    gate = torch.randn(2048, 4096, device="cuda", dtype=torch.float32)
+    up = torch.randn(2048, 4096, device="cuda", dtype=torch.float32)
     mod_swiglu = SwiGLUModule().cuda()
     compiled_swiglu = kl.compile(mod_swiglu, (gate, up), name="Bench_SwiGLU", backends=["onnx"])
     
     compiled_ref_swiglu = torch.compile(ref_swiglu)
-    for _ in range(10): compiled_ref_swiglu(gate, up)
+    for _ in range(20): compiled_ref_swiglu(gate, up)
+    for _ in range(20): compiled_swiglu.run((gate, up), backend="onnx")
     
     lat_eager_swi = time_fn(ref_swiglu, (gate, up))
     lat_tc_swi = time_fn(compiled_ref_swiglu, (gate, up))
@@ -240,7 +242,7 @@ def benchmark_all():
     }
 
     # --- Operator 3: RoPE ---
-    B, S, H, D = 16, 512, 32, 128
+    B, S, H, D = 4, 512, 32, 128
     x_rope = torch.randn(B, S, H, D, device="cuda", dtype=torch.float32)
     cos = torch.randn(S, D, device="cuda", dtype=torch.float32)
     sin = torch.randn(S, D, device="cuda", dtype=torch.float32)
@@ -248,7 +250,8 @@ def benchmark_all():
     compiled_rope = kl.compile(mod_rope, (x_rope, cos, sin), name="Bench_RoPE", backends=["onnx"])
     
     compiled_ref_rope = torch.compile(ref_rope)
-    for _ in range(10): compiled_ref_rope(x_rope, cos, sin)
+    for _ in range(20): compiled_ref_rope(x_rope, cos, sin)
+    for _ in range(20): compiled_rope.run((x_rope, cos, sin), backend="onnx")
     
     lat_eager_rope = time_fn(ref_rope, (x_rope, cos, sin))
     lat_tc_rope = time_fn(compiled_ref_rope, (x_rope, cos, sin))
@@ -263,14 +266,15 @@ def benchmark_all():
     }
 
     # --- Operator 4: Fused CrossEntropy ---
-    B, V = 256, 32000
+    B, V = 32, 32000
     logits = torch.randn(B, V, device="cuda", dtype=torch.float32)
     targets = torch.randint(0, V, (B,), device="cuda", dtype=torch.int64)
     mod_ce = FusedCrossEntropyModule(V).cuda()
     compiled_ce = kl.compile(mod_ce, (logits, targets), name="Bench_CrossEntropy", backends=["onnx"])
     
     compiled_ref_ce = torch.compile(ref_cross_entropy)
-    for _ in range(10): compiled_ref_ce(logits, targets)
+    for _ in range(20): compiled_ref_ce(logits, targets)
+    for _ in range(20): compiled_ce.run((logits, targets), backend="onnx")
     
     lat_eager_ce = time_fn(ref_cross_entropy, (logits, targets))
     lat_tc_ce = time_fn(compiled_ref_ce, (logits, targets))

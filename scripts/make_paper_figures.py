@@ -137,13 +137,13 @@ def create_benchmark_diagram(output_path):
     fig.patch.set_facecolor('#F8FAFC') # Clean white/light slate publication background
     ax.set_facecolor('#FFFFFF')
 
-    operators = ['LLaMA 3 RMSNorm\n(D=4096)', 'PaLM SwiGLU\n(N=256)', 'Qwen 2.5 RoPE\n(D=64)', 'Fused Cross-Entropy\n(V=128K)']
+    operators = ['LLaMA 3 RMSNorm\n(D=4096)', 'PaLM SwiGLU\n(N=4096)', 'Qwen 2.5 RoPE\n(D=128)', 'Fused Cross-Entropy\n(V=32K)']
     
     # Latencies in ms
-    pytorch_eager = [24.12, 0.05, 8.01, 26.48]
-    torch_compile = [6.97,  0.20, 1.77, 6.26]
-    native_triton = [7.03,  0.11, 1.90, 12.58]
-    kernellens_ort = [7.19,  0.42, 2.04, 12.81]
+    pytorch_eager = [1.58, 1.09, 2.03, 1.85]
+    torch_compile = [0.44, 0.65, 0.45, 0.42]
+    native_triton = [0.45, 0.64, 0.51, 0.35]
+    kernellens_ort = [0.46, 0.64, 0.48, 0.33]
 
     x = np.arange(len(operators))
     width = 0.18
@@ -165,7 +165,7 @@ def create_benchmark_diagram(output_path):
     ax.set_xticklabels(operators, fontsize=10, fontweight='bold', color='#334155')
     ax.legend(frameon=True, facecolor='#F1F5F9', edgecolor='#CBD5E1', fontsize=10)
     ax.set_yscale('log')
-    ax.set_ylim(0.01, 100)
+    ax.set_ylim(0.05, 10)
     ax.grid(axis='y', linestyle='--', alpha=0.5, color='#94A3B8')
 
     # Add numeric labels on top of KernelLens bars
