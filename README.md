@@ -6,7 +6,7 @@
   # Automated Triton-to-C++ Compiler for Enterprise Inference Runtimes
 
   [![PyPI Version](https://img.shields.io/pypi/v/kernel-lens.svg?color=blue)](https://pypi.org/project/kernel-lens/)
-  [![Python 3.9+](https://img.shields.io/badge/python-3.9+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
+  [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
   [![CUDA 12.0+](https://img.shields.io/badge/CUDA-12.0+-76B900.svg?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
   [![GitHub Main](https://img.shields.io/github/actions/workflow/status/Just1truc/kernel_lens/ci.yml?branch=main&label=build)](https://github.com/Just1truc/kernel_lens)
@@ -18,13 +18,11 @@
 
 <br/>
 
----
-
 ## Overview
 
 **KernelLens** is an open-source compiler framework designed to transform PyTorch models containing custom `@triton.jit` kernels into standalone, high-performance C++ shared libraries (`.so`). 
 
-It generates native **ONNX Runtime (`OrtCustomOp`)** and **NVIDIA TensorRT 10.x (`nvinfer1::IPluginV2DynamicExt`)** plugins automatically—eliminating thousands of lines of C++ boilerplate, manual `nvcc` build scripts, and host-side memory copies.
+It generates native **ONNX Runtime (`OrtCustomOp`)** and **NVIDIA TensorRT 10.x (`nvinfer1::IPluginV2DynamicExt`)** plugins automatically—eliminating thousands of lines of C++ boilerplate, manual `nvcc` build scripts and host-side memory copies.
 
 ```
 +-----------------------------------------------------------------------------------+
@@ -46,8 +44,6 @@ It generates native **ONNX Runtime (`OrtCustomOp`)** and **NVIDIA TensorRT 10.x 
 +-----------------------------------------------------------------------------------+
 ```
 
----
-
 ## Key Features
 
 * **Zero C++ Boilerplate**: Automatically inspects Triton kernel signatures and synthesizes production-ready C++ plugin code (`.cu`, `.cpp`, `.h`) and compiled shared libraries (`.so`).
@@ -57,8 +53,6 @@ It generates native **ONNX Runtime (`OrtCustomOp`)** and **NVIDIA TensorRT 10.x 
 * **Toolchain & Hardware Hardening**: Features automatic PTX ISA version clamping (`.version 9.3` $\rightarrow$ `.version 9.0`) for NVIDIA Blackwell (`sm_120a`) GPU driver compatibility.
 * **FP8 & Sub-Byte (INT4) Support**: Native 1-byte pointer mapping (`GetTensorData<uint8_t>()`) for quantized Tensor Core acceleration.
 * **Cold-Start Disk Caching**: Caches compiled C++ dynamic libraries (`.so`) and TensorRT engines (`.engine`) for instant cold-start loading in production.
-
----
 
 ## Installation
 
@@ -76,12 +70,10 @@ pip install kernel-lens[all]   # Full backend suite
 
 ### System Requirements
 * **OS**: Linux (x86_64)
-* **Python**: 3.9+
+* **Python**: 3.10+
 * **CUDA Toolkit**: 12.0+
 * **PyTorch**: 2.0+
 * **Triton**: 2.1+
-
----
 
 ## Quickstart
 
@@ -136,8 +128,6 @@ ort_output = compiled_model.run((x,), backend="onnx")
 trt_output = compiled_model.run((x,), backend="tensorrt")
 ```
 
----
-
 ## Empirical GPU Latency Benchmark
 
 Evaluated on NVIDIA GPU across state-of-the-art LLM operators:
@@ -152,8 +142,6 @@ Evaluated on NVIDIA GPU across state-of-the-art LLM operators:
 
 *All runs achieve exact numerical parity against native Triton execution.*
 
----
-
 ## System Architecture
 
 ```
@@ -164,12 +152,10 @@ Evaluated on NVIDIA GPU across state-of-the-art LLM operators:
   [ C++ Exec Engine ] ◄── Dynamic Plugin Load ◄── nvcc / g++ Build ◄───────┴── Synthesized C++/CUDA Code
 ```
 
-1. **Phase 1: Dual-Pass Tracing**: Intercepts eager Triton launches to record PTX strings, shared memory bytes, and scalar arguments. A secondary PyTorch FX proxy pass captures dynamic grid expressions.
+1. **Phase 1: Dual-Pass Tracing**: Intercepts eager Triton launches to record PTX strings, shared memory bytes and scalar arguments. A secondary PyTorch FX proxy pass captures dynamic grid expressions.
 2. **Phase 2: Base ONNX Graph Transformation**: Injects custom domain nodes (`triton_custom::<kernel_name>`) and binds CPU scalar parameters (`OrtMemTypeCPUInput`).
 3. **Phase 3: Code Synthesis & Toolchain Hardening**: Emits complete C++ source files implementing `Ort::CustomOp` and `nvinfer1::IPluginV2DynamicExt`. Injects 16-byte alignment guards and applies PTX version clamping.
 4. **Phase 4: Zero-Copy Runtime Execution**: Dynamically loads shared libraries via `ctypes.CDLL` and binds GPU VRAM pointers directly to execution contexts.
-
----
 
 ## Advanced Usage & Native Debugging
 
@@ -189,8 +175,6 @@ Enable verbose tripwire logging to inspect generated C++ grid calculations and G
 KERNEL_LENS_DEBUG=1 python my_inference_script.py
 ```
 
----
-
 ## Step-by-Step Reproduction & Verification Guide
 
 Follow these steps to reproduce the empirical benchmarks and verify system correctness:
@@ -205,7 +189,7 @@ pip install -e .[all]
 ```
 
 ### Step 2: Verify Research Kernel Numerical Parity
-Run the research model operator test suite evaluating LLaMA 3 RMSNorm, SwiGLU, RoPE, and Liger-Kernel Fused Cross-Entropy:
+Run the research model operator test suite evaluating LLaMA 3 RMSNorm, SwiGLU, RoPE and Liger-Kernel Fused Cross-Entropy:
 
 ```bash
 python3 tests/test_research_kernels.py
@@ -221,7 +205,7 @@ ALL RECENT RESEARCH TRITON KERNELS PASSED WITH KERNEL LENS!
 ```
 
 ### Step 3: Run End-to-End Multi-Layer Transformer Decoder Benchmarks
-Run the 4-layer LLaMA Transformer decoder pipeline benchmark comparing PyTorch Eager, `torch.compile`, ONNX Runtime, and TensorRT 10.x C++ plugins:
+Run the 4-layer LLaMA Transformer decoder pipeline benchmark comparing PyTorch Eager, `torch.compile`, ONNX Runtime and TensorRT 10.x C++ plugins:
 
 ```bash
 python3 tests/benchmark_e2e_llama.py
@@ -241,7 +225,7 @@ Saved real end-to-end benchmark results to measured_e2e_llama.json
 ```
 
 ### Step 4: Verify Edge-Case Stress Tests & Architectural Fixes
-Verify dynamic scalar parameters, 4D high-rank launch grids, and nested stores:
+Verify dynamic scalar parameters, 4D high-rank launch grids and nested stores:
 
 ```bash
 python3 tests/test_architectural_fixes.py
@@ -262,8 +246,6 @@ pdflatex -interaction=nonstopmode architecture_report.tex
 
 *Expected Output:* `Output written on architecture_report.pdf (19 pages)`
 
----
-
 ## Citation & Research Paper
 
 If you use **KernelLens** in your research, please cite our technical report:
@@ -277,8 +259,6 @@ If you use **KernelLens** in your research, please cite our technical report:
   url={https://github.com/Just1truc/kernel_lens}
 }
 ```
-
----
 
 ## License
 
