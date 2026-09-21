@@ -370,20 +370,6 @@ if (staging_ptr != nullptr) {
 
 This guard guarantees memory alignment safety while ensuring zero performance penalty for standard 16-byte aligned tensor allocations.
 
-\subsection{Data-Type Invariance of Alignment Guards (FP8, FP16, FP32, INT8)}
-
-A technical consideration is whether the 16-byte memory alignment condition ($\text{Address} \pmod{16} == 0$) applies identically across different element data types, specifically FP8 (\texttt{e4m3fn}, \texttt{e5m2}), FP16 / BF16, FP32 and sub-byte integer types (INT8, packed INT4).
-
-\textit{Hardware Architecture Invariance:} The 16-byte alignment requirement is strictly dictated by the 128-bit SIMD memory bus transaction width of the NVIDIA GPU Memory Management Unit (MMU), rather than the individual scalar element byte size:
-\begin{itemize}[leftmargin=1.5em]
-    \item \textit{FP32 (4 Bytes/Element):} A single 128-bit SIMD memory transaction fetches $4 \times 32\text{-bit elements} = 128 \text{ bits} = 16 \text{ bytes}$.
-    \item \textit{FP16 / BF16 (2 Bytes/Element):} A single 128-bit SIMD memory transaction fetches $8 \times 16\text{-bit elements} = 128 \text{ bits} = 16 \text{ bytes}$.
-    \item \textit{FP8 / INT8 (1 Byte/Element):} A single 128-bit SIMD memory transaction fetches $16 \times 8\text{-bit elements} = 128 \text{ bits} = 16 \text{ bytes}$.
-    \item \textit{INT4 (0.5 Bytes/Element):} A single 128-bit SIMD memory transaction fetches $32 \times 4\text{-bit packed elements} = 128 \text{ bits} = 16 \text{ bytes}$.
-\end{itemize}
-
-Because the Triton compiler automatically vectorizes memory loops into 128-bit PTX instructions (\texttt{ld.global.v4.b32}, \texttt{ld.global.b128}) across all supported data types, any starting VRAM address that is not a multiple of 16 bytes ($\text{addr} \pmod{16} \neq 0$) triggers a \texttt{cudaErrorMisalignedAddress} (CUDA Error 716) exception for FP8 and FP16 tensors identically as for FP32 tensors. Consequently, KernelLens's automated 16-byte memory alignment guard operates identically across FP8, FP16, FP32 and INT8/INT4 data types.
-
 \subsection{Zero-Copy Runtime IO Binding Engine (\texttt{engine.py})}
 
 Traditional PyTorch-to-C++ deployment frameworks copy tensor data from PyTorch GPU tensors to CPU host staging buffers before passing data to ONNX Runtime or TensorRT. This introduces Host-to-Device (H2D) and Device-to-Host (D2H) memory transfer overhead:
