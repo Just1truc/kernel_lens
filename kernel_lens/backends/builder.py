@@ -3,7 +3,6 @@ import subprocess
 import urllib.request
 import tarfile
 import shutil
-import onnxruntime
 
 from ..utils.env_check import find_nvcc
 
