@@ -404,9 +404,12 @@ extern "C" {
         Ort::InitApi(api_base->GetApi(ORT_API_VERSION));
         static Ort::CustomOpDomain custom_domain("triton_custom");
 '''
+        seen_kernels = set()
         for m in self.manifests:
-            registrar_code += f'        static custom::{m.kernel_name}Op c_{m.kernel_name};\n'
-            registrar_code += f'        custom_domain.Add(&c_{m.kernel_name});\n'
+            if m.kernel_name not in seen_kernels:
+                seen_kernels.add(m.kernel_name)
+                registrar_code += f'        static custom::{m.kernel_name}Op c_{m.kernel_name};\n'
+                registrar_code += f'        custom_domain.Add(&c_{m.kernel_name});\n'
 
         registrar_code += '''
         Ort::UnownedSessionOptions sess_options(options);
