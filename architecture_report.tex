@@ -589,7 +589,7 @@ INT4 W4A16 GEMM ($2048 \times 4096$) & \texttt{int4 / uint8} & $1.39 \text{ ms}$
 
 \subsection{End-to-End Model Benchmarks: LLaMA Transformer Decoder Pipeline}
 
-To validate the central claim that KernelLens enables runtimes to perform global graph-level optimizations across standard neural network layers while retaining custom Triton kernels, we evaluate a multi-layer **LLaMA Transformer Decoder Pipeline** \cite{llama3} ($4$ layers, $1024$ hidden dimension, $16$ attention heads).
+To validate the central claim that KernelLens enables runtimes to perform global graph-level optimizations across standard neural network layers while retaining custom Triton kernels, we evaluate a multi-layer \textbf{LLaMA Transformer Decoder Pipeline} \cite{llama3} ($4$ layers, $1024$ hidden dimension, $16$ attention heads).
 
 We benchmark three production runtime configurations:
 \begin{enumerate}
