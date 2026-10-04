@@ -18,7 +18,6 @@
 
 \geometry{margin=1in}
 
-% --- Color Palette ---
 \definecolor{primaryblue}{RGB}{24, 76, 120}
 \definecolor{darknavy}{RGB}{10, 30, 60}
 \definecolor{codegreen}{rgb}{0,0.6,0}
@@ -35,7 +34,6 @@
     urlcolor=primaryblue
 }
 
-% Allow line breaking in URLs and long code strings
 \makeatletter
 \g@addto@macro\UrlBreaks{\do\/\do\_\do\.\do\:\do\-}
 \makeatother
@@ -99,9 +97,7 @@ We detail key architectural innovations in KernelLens, including TensorRT C++ pl
 \tableofcontents
 \newpage
 
-% =========================================================================
 \section{Introduction}
-% =========================================================================
 
 Deep learning systems rely on domain-specific GPU kernels to improve computational efficiency, reduce VRAM bandwidth demands and fuse multi-stage attention and normalization blocks. OpenAI Triton \cite{triton2019} is a standard programming model for authoring custom GPU kernels in Python, providing C/CUDA-like execution control with Python syntax.
 
@@ -161,9 +157,7 @@ Production execution engines such as Microsoft ONNX Runtime and NVIDIA TensorRT 
 \label{fig:value_proposition}
 \end{figure}
 
-% =========================================================================
 \section{Related Work}
-% =========================================================================
 
 \subsection{PyTorch Compiler \& Inductor}
 PyTorch 2.0 introduced \texttt{torch.compile} powered by TorchInductor \cite{pytorch20}, which generates Triton code for PyTorch eager graphs. While TorchInductor optimizes PyTorch eager execution, it operates inside a Python process and relies on PyTorch C++ runtime dependencies (\texttt{libtorch}). It does not provide standalone ONNX graph representations or C++ plugin libraries suitable for direct integration into non-Python C++ production servers.
@@ -201,9 +195,7 @@ Zero C++ Boilerplate Required & $\times$ & $\times$ & $\times$ & $\checkmark$ \\
 
 Unlike PyTorch AOTInductor, which compiles graphs into shared libraries that still link against PyTorch's \texttt{c10} tensor library, KernelLens produces self-contained C++ plugins that plug natively into ONNX Runtime and TensorRT. Unlike raw \texttt{tritoncc}, KernelLens automates ONNX schema injection, SymPy AST grid resolution, and 16-byte memory alignment guards.
 
-% =========================================================================
 \section{Anatomy of a Triton Kernel \& Parameter Taxonomy}
-% =========================================================================
 
 \subsection{What a Triton Kernel Requires: Formal Parameter Taxonomy}
 
@@ -226,9 +218,7 @@ To understand how KernelLens automatically compiles Triton kernels, we formalize
     \end{equation}
 \end{enumerate}
 
-% =========================================================================
 \section{Consolidated 4-Phase KernelLens Compiler Architecture}
-% =========================================================================
 
 Rather than exposing fragmented micro-steps, KernelLens operates through four unified, logical compiler phases: (1)~Analysis \& Manifest Assembly; (2)~ONNX Graph Transformation; (3)~C++/CUDA Code Synthesis \& Hardening; and (4)~Zero-Copy Runtime Binding.
 
@@ -346,9 +336,7 @@ Phase 4 executes the compiled model inside C++ runtimes with zero data movement 
     \item \textit{Zero-Copy VRAM IO Binding (\texttt{engine.py}):} Uses ONNX Runtime \texttt{IOBinding} and TensorRT \texttt{set\_tensor\_address} to bind PyTorch GPU memory addresses directly to execution contexts, achieving $O(1)$ pointer registration overhead and numerical parity ($\text{MaxDiff} = 0.00\text{e}+00$). Dynamic INT8 range initialization (\texttt{set\_dynamic\_range}) is strictly scoped to \texttt{Int8} tensors.
 \end{itemize}
 
-% =========================================================================
 \section{16-Byte Memory Alignment Guards \& Zero-Copy Runtime}
-% =========================================================================
 
 \subsection{128-Bit SIMD Memory Vectorization in GPU Hardware}
 
@@ -472,9 +460,7 @@ By binding raw VRAM data pointers directly ($\text{buffer\_ptr} = \text{t.data\_
 T_{\text{KernelLens}} = T_{\text{pointer\_registration}} + T_{\text{kernel\_exec}} \quad \Big(T_{\text{pointer\_registration}} \approx 0 \text{ ms}\Big)
 \end{equation}
 
-% =========================================================================
 \section{Experiments \& Empirical Results}
-% =========================================================================
 
 \subsection{Benchmark Experimental Setup}
 
@@ -654,9 +640,7 @@ The empirical results in Table~\ref{tab:dynamic_shapes} demonstrate that KernelL
 \label{fig:benchmark_latencies}
 \end{figure}
 
-% =========================================================================
 \section{Future Work \& Architectural Roadmap}
-% =========================================================================
 
 While KernelLens automates single-GPU Triton kernel compilation and deployment to C++ inference engines (ONNX Runtime and NVIDIA TensorRT), several architectural frontiers present opportunities for future compiler evolution.
 
@@ -715,15 +699,12 @@ The formal verification solver will inspect compiled PTX assembly and SymPy grid
 \end{equation}
 This will verify the absence of out-of-bounds VRAM access, warp divergence deadlock traps and hardware memory alignment exceptions prior to C++ shared library compilation.
 
-% =========================================================================
 \section{Conclusion}
-% =========================================================================
 
 In this paper, we presented KernelLens, an automated compiler and runtime framework designed to bridge Python OpenAI Triton kernels directly to C++ inference engines (ONNX Runtime and NVIDIA TensorRT). By unifying dynamic parameter taxonomy extraction, a consolidated 4-phase compiler architecture, dual-pass symbolic tracing, static AST inspection for nested memory access, global ONNX custom node injection, automated C++/CUDA code generation, 16-byte memory alignment guards and zero-copy IO binding, KernelLens automates production kernel deployment.
 
 KernelLens enables runtimes such as TensorRT and ONNX Runtime to execute global graph-level optimizations (including constant folding, operator fusion, FP16/INT8 engine selection and memory planning) across standard model layers, while executing custom \texttt{@triton.jit} kernels via synthesized zero-copy C++ plugins. Empirical evaluation on research model kernels from LLaMA 3, PaLM, Qwen 2.5 and Liger-Kernel demonstrates exact numerical parity ($\text{MaxDiff} = 0.00\text{e}+00$) and high inference throughput in C++ production environments.
 
-% =========================================================================
 \begin{thebibliography}{99}
 
 \bibitem{triton2019}
