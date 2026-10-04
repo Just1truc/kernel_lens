@@ -13,6 +13,8 @@
 \usepackage{caption}
 \usepackage{subcaption}
 \usepackage{colortbl}
+\usepackage{algorithm}
+\usepackage{algorithmic}
 
 \geometry{margin=1in}
 
@@ -246,41 +248,69 @@ Phase 1 analyzes the PyTorch model and custom \texttt{@triton.jit} functions to 
     \end{equation}
     Dynamic launch grid dimensions are transpiled into platform-agnostic SymPy symbolic strings (e.g., \texttt{"(s0 * s1 + 127) // 128"}). If non-traceable Python control flow is encountered, KernelLens falls back to Pass 1 concrete metadata, ensuring compiler stability.
     
-    \item \textit{Static AST Inspection of Main \& Nested Helper Functions (\texttt{ast\_analyzer.py}):} Python's \texttt{ast.NodeVisitor} recursively parses the main \texttt{@triton.jit} kernel and all nested helper functions (e.g., \texttt{\_helper\_store}):
-    \begin{lstlisting}[language=Python]
-@triton.jit
-def _helper_store(ptr, offsets, values, mask):
-    tl.store(ptr + offsets, values, mask=mask)
+    \item \textit{Static AST Inspection of Main \& Nested Helper Functions (\texttt{ast\_analyzer.py}):} Python's \texttt{ast.NodeVisitor} recursively parses the main \texttt{@triton.jit} kernel and all nested helper functions as detailed in Algorithm~\ref{alg:ast_inspection}. The AST inspector classifies parameter attributes (Read, Write or In-Place Mutability). If a buffer $p_i$ is flagged for both Read and Write access, KernelLens sets \texttt{is\_inplace = True}, enabling downstream graph exporters to alias input and output ONNX buffers directly without VRAM re-allocation.
 
-@triton.jit
-def nested_kernel(x_ptr, out_ptr, n_elements, BLOCK: tl.constexpr):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK + tl.arange(0, BLOCK)
-    val = tl.load(x_ptr + offsets, mask=offsets < n_elements)
-    _helper_store(out_ptr, offsets, val * 3.0, mask=offsets < n_elements)
-    \end{lstlisting}
-    The AST inspector classifies parameter attributes (Read, Write or In-Place Mutability). If a buffer $p_i$ is flagged for both Read and Write access, KernelLens sets \texttt{is\_inplace = True}, enabling downstream graph exporters to alias input and output ONNX buffers directly without VRAM re-allocation.
+\begin{algorithm}[h!]
+\caption{Recursive AST Mutability Inspection and Parameter Taxonomy}
+\label{alg:ast_inspection}
+\begin{algorithmic}[1]
+\REQUIRE Triton kernel AST $\mathcal{T}_{\text{root}}$, parameter list $\mathcal{P}$
+\ENSURE Analyzed parameter attributes with mutability vector $\mathbf{m}$
+\STATE $\mathcal{R} \leftarrow \emptyset, \quad \mathcal{W} \leftarrow \emptyset$
+\STATE Traverse AST $\mathcal{T}_{\text{root}}$ recursively (including nested helper functions $f_{\text{helper}}$):
+\FOR{each statement $s \in \mathcal{T}_{\text{root}}$}
+    \IF{$s$ is a memory read \texttt{tl.load($ptr$, \dots)}}
+        \STATE $\mathcal{R} \leftarrow \mathcal{R} \cup \{ \text{Symbol}(ptr) \}$ \COMMENT{Record memory read}
+    \ELSIF{$s$ is a memory write \texttt{tl.store($ptr$, \dots)}}
+        \STATE $\mathcal{W} \leftarrow \mathcal{W} \cup \{ \text{Symbol}(ptr) \}$ \COMMENT{Record memory write}
+    \ENDIF
+\ENDFOR
+\FOR{each parameter $p_i \in \mathcal{P}$}
+    \IF{$p_i \in \mathcal{R} \land p_i \in \mathcal{W}$}
+        \STATE $m_i \leftarrow \mathbf{true}$ \COMMENT{Read-write buffer aliasing flag}
+        \STATE $p_i.\text{kind} \leftarrow \text{Input/Output Aliased}$
+    \ELSIF{$p_i \in \mathcal{W}$}
+        \STATE $m_i \leftarrow \mathbf{false}, \quad p_i.\text{kind} \leftarrow \text{Output}$
+    \ELSE
+        \STATE $m_i \leftarrow \mathbf{false}, \quad p_i.\text{kind} \leftarrow \text{Input}$
+    \ENDIF
+\ENDFOR
+\RETURN $\mathcal{P}, \mathbf{m}$
+\end{algorithmic}
+\end{algorithm}
     
     \item \textit{Manifest Assembly (\texttt{manifest.py}):} Combines PTX assembly, $S_{\text{mem}}$, SymPy grid strings, parameter mapping tables, data types (\texttt{fp16}, \texttt{bf16}, \texttt{fp32}, \texttt{fp8} and \texttt{int4}) and mutability flags into a validated \texttt{KernelManifest}.
 \end{itemize}
 
 \subsubsection{Phase 2: Base ONNX Graph Export \& Custom Node Injection (Graph Transformation)}
 
-Phase 2 embeds custom Triton kernels into standard computational graph representations:
+Phase 2 embeds custom Triton kernels into standard computational graph representations as formalized in Algorithm~\ref{alg:onnx_injection}:
+
+\begin{algorithm}[h!]
+\caption{Custom ONNX Domain Node Injection and Graph Rewriting}
+\label{alg:onnx_injection}
+\begin{algorithmic}[1]
+\REQUIRE PyTorch computational graph $\mathcal{G}$, Kernel Manifest $\mathcal{M}$
+\ENSURE Transformed graph $\mathcal{G}'$ with custom domain operators
+\FOR{each target kernel invocation node $v \in \mathcal{G}$}
+    \STATE Extract input tensors $\mathcal{X} = \{x_1, x_2, \dots, x_k\}$ and scalar parameters $\mathcal{S}$
+    \STATE Retrieve SymPy grid expressions $\mathcal{E}_{\text{grid}} = (e_x, e_y, e_z)$ from $\mathcal{M}$
+    \STATE Instantiate custom node $u \leftarrow \text{CreateNode}(\text{Domain} = \text{``triton\_custom''}, \text{Op} = \mathcal{M}.\text{kernel\_name})$
+    \STATE Attach node attributes: PTX payload $\mathcal{M}.\text{ptx}$, shared memory $S_{\text{mem}}$ and mutability vector $\mathbf{m}$
+    \FOR{each runtime scalar parameter $s_j \in \mathcal{S}$}
+        \STATE Set memory binding: $\text{MemoryType}(s_j) \leftarrow \text{OrtMemTypeCPUInput}$
+    \ENDFOR
+    \IF{$\mathcal{M}.\text{is\_inplace} = \mathbf{true}$}
+        \STATE Alias graph output tensor buffer $y_1$ directly to input tensor buffer $x_1$
+    \ENDIF
+    \STATE Replace target node $v$ with synthesized custom node $u$ in graph $\mathcal{G}'$
+\ENDFOR
+\RETURN $\mathcal{G}'$
+\end{algorithmic}
+\end{algorithm}
 
 \begin{itemize}[leftmargin=1.5em]
-    \item \textit{Base ONNX Export \& Node Injection (\texttt{onnx\_exporter.py}):} KernelLens registers the \texttt{TritonGlobalONNXExporter} hook with PyTorch's ONNX exporter. When \texttt{torch.onnx.export} traces the module, imperative Triton calls are intercepted and replaced with custom ONNX domain nodes under namespace \texttt{triton\_custom::<kernel\_name>}:
-    \begin{lstlisting}[language=Python]
-g.op("triton_custom::" + kernel_name,
-     *tensor_inputs,
-     grid_x_s=manifest.grid_exprs[0],
-     grid_y_s=manifest.grid_exprs[1],
-     grid_z_s=manifest.grid_exprs[2],
-     ptx_code_s=manifest.ptx_code,
-     shared_mem_i=manifest.shared_mem,
-     is_inplace_i=manifest.is_inplace_flags,
-     **scalar_attributes)
-    \end{lstlisting}
+    \item \textit{Base ONNX Export \& Node Injection (\texttt{onnx\_exporter.py}):} KernelLens registers the \texttt{TritonGlobalONNXExporter} hook with PyTorch's ONNX exporter. When \texttt{torch.onnx.export} traces the module, imperative Triton calls are intercepted and replaced with custom ONNX domain nodes under namespace \texttt{triton\_custom::<kernel\_name>}.
     
     \item \textit{Dynamic Host CPU Scalar Binding (\texttt{OrtMemTypeCPUInput}):} Primitive runtime scalar parameters (e.g., scaling factor $\alpha$, temperature $\tau$) are passed as Host CPU inputs rather than hardcoded static node attributes. KernelLens sets \texttt{MemoryType(i) = OrtMemTypeCPUInput}, allowing dynamic scalar updates per forward pass without triggering kernel recompilations.
     
@@ -363,37 +393,31 @@ KernelLens solves hardware address misalignment by embedding automated memory al
 \label{fig:alignment_guard}
 \end{figure}
 
-The generated C++ alignment guard code is structured as follows:
+The generated C++ alignment guard workflow is formalized in Algorithm~\ref{alg:alignment_guard}:
 
-\begin{lstlisting}[language=C++]
-// Generated C++ Alignment Guard Code in Custom Plugin
-uintptr_t addr = reinterpret_cast<uintptr_t>(raw_tensor_ptr);
-void* exec_ptr = raw_tensor_ptr;
-void* staging_ptr = nullptr;
-
-if (addr % 16 != 0) {
-    // Allocate 16-byte aligned staging buffer asynchronously on CUDA stream
-    cudaMallocAsync(&staging_ptr, tensor_bytes, stream);
-    cudaMemcpyAsync(staging_ptr, raw_tensor_ptr, tensor_bytes, 
-                    cudaMemcpyDeviceToDevice, stream);
-    exec_ptr = staging_ptr;
-}
-
-// Pass exec_ptr to PTX cuLaunchKernel array ...
-void* kernel_args[] = { &exec_ptr, &stride_0, &dim_0 };
-cuLaunchKernel(ptx_function, grid_x, grid_y, grid_z, 
-               block_x, block_y, block_z, 
-               shared_mem_bytes, stream, kernel_args, nullptr);
-
-// Post-execution copy-back for mutable output tensors
-if (staging_ptr != nullptr) {
-    if (is_output_tensor) {
-        cudaMemcpyAsync(raw_tensor_ptr, staging_ptr, tensor_bytes, 
-                        cudaMemcpyDeviceToDevice, stream);
-    }
-    cudaFreeAsync(staging_ptr, stream);
-}
-\end{lstlisting}
+\begin{algorithm}[h!]
+\caption{Dynamic 16-Byte Hardware Memory Alignment Guard and Staging Protocol}
+\label{alg:alignment_guard}
+\begin{algorithmic}[1]
+\REQUIRE Unaligned VRAM pointer $p_{\text{raw}}$, tensor byte size $B_{\text{bytes}}$, CUDA stream $\mathcal{S}$, output flag $\text{is\_output}$
+\ENSURE Aligned execution pointer $p_{\text{exec}}$ and safe CUDA kernel launch
+\STATE Address integer $\alpha \leftarrow \text{uintptr\_t}(p_{\text{raw}})$
+\STATE $p_{\text{exec}} \leftarrow p_{\text{raw}}, \quad p_{\text{staging}} \leftarrow \mathbf{null}$
+\IF[Sub-aligned VRAM address detected]{$\alpha \pmod{16} \neq 0$}
+    \STATE $\text{cudaMallocAsync}(\&p_{\text{staging}}, B_{\text{bytes}}, \mathcal{S})$ \COMMENT{Allocate 16-byte aligned staging buffer}
+    \STATE $\text{cudaMemcpyAsync}(p_{\text{staging}}, p_{\text{raw}}, B_{\text{bytes}}, \text{DeviceToDevice}, \mathcal{S})$
+    \STATE $p_{\text{exec}} \leftarrow p_{\text{staging}}$
+\ENDIF
+\STATE Assemble kernel execution arguments $\mathcal{A}_{\text{launch}} \leftarrow \{ \&p_{\text{exec}}, \text{strides}, \text{dimensions} \}$
+\STATE $\text{cuLaunchKernel}(\text{ptx\_fn}, \text{grid}, \text{block}, S_{\text{mem}}, \mathcal{S}, \mathcal{A}_{\text{launch}})$
+\IF{$p_{\text{staging}} \neq \mathbf{null}$}
+    \IF{$\text{is\_output} = \mathbf{true}$}
+        \STATE $\text{cudaMemcpyAsync}(p_{\text{raw}}, p_{\text{staging}}, B_{\text{bytes}}, \text{DeviceToDevice}, \mathcal{S})$
+    \ENDIF
+    \STATE $\text{cudaFreeAsync}(p_{\text{staging}}, \mathcal{S})$
+\ENDIF
+\end{algorithmic}
+\end{algorithm}
 
 This guard guarantees memory alignment safety while ensuring zero performance penalty for standard 16-byte aligned tensor allocations.
 
@@ -404,45 +428,38 @@ Traditional PyTorch-to-C++ deployment frameworks copy tensor data from PyTorch G
 T_{\text{traditional}} = T_{\text{H2D\_copy}} + T_{\text{kernel\_exec}} + T_{\text{D2H\_copy}} \quad \Big(O(N) \text{ memory bandwidth cost}\Big)
 \end{equation}
 
-KernelLens eliminates data movement by implementing zero-copy VRAM IO binding in \texttt{engine.py}:
+KernelLens eliminates data movement by implementing zero-copy VRAM IO-binding in \texttt{engine.py}, as formalized in Algorithm~\ref{alg:zero_copy_runtime}:
 
-\subsubsection{1. ONNX Runtime IO Binding}
-KernelLens leverages ONNX Runtime's native \texttt{IOBinding} API to map PyTorch GPU memory addresses directly to graph input and output execution slots:
-\begin{lstlisting}[language=Python]
-io_binding = self._ort_session.io_binding()
-
-# Bind input PyTorch GPU memory pointers directly to ORT
-for i, sess_in in enumerate(session_inputs):
-    t = inputs[i]
-    io_binding.bind_input(
-        name=sess_in.name, device_type='cuda', device_id=0,
-        element_type=torch_to_np_dtype[t.dtype],
-        shape=tuple(t.shape), buffer_ptr=t.data_ptr()
-    )
-
-# Pre-allocate output PyTorch GPU tensors directly on VRAM
-for sess_out, t in zip(session_outputs, ort_output_tensors):
-    io_binding.bind_output(
-        name=sess_out.name, device_type='cuda', device_id=0,
-        element_type=torch_to_np_dtype[t.dtype],
-        shape=tuple(t.shape), buffer_ptr=t.data_ptr()
-    )
-
-self._ort_session.run_with_iobinding(io_binding)
-\end{lstlisting}
-
-\subsubsection{2. TensorRT Zero-Copy Pointer Registration}
-For TensorRT, \texttt{engine.py} creates an execution context and registers PyTorch GPU pointers directly using \texttt{set\_tensor\_address}:
-\begin{lstlisting}[language=Python]
-for name, tensor in zip(input_names, inputs):
-    self._trt_context.set_input_shape(name, tensor.shape)
-    self._trt_context.set_tensor_address(name, tensor.data_ptr())
-
-for name, out_tensor in zip(output_names, output_tensors):
-    self._trt_context.set_tensor_address(name, out_tensor.data_ptr())
-
-self._trt_context.execute_async_v3(self._trt_stream.cuda_stream)
-\end{lstlisting}
+\begin{algorithm}[h!]
+\caption{Zero-Copy VRAM IO-Binding Runtime Dispatch for ONNX Runtime and TensorRT}
+\label{alg:zero_copy_runtime}
+\begin{algorithmic}[1]
+\REQUIRE Execution engine $\mathcal{E}$, input PyTorch GPU tensors $\mathcal{T}_{\text{in}}$, CUDA stream $\mathcal{S}$
+\ENSURE Output PyTorch GPU tensors $\mathcal{T}_{\text{out}}$ with zero copy overhead
+\IF{$\mathcal{E}$ is ONNX Runtime}
+    \STATE $\mathcal{B} \leftarrow \mathcal{E}.\text{io\_binding}()$ \COMMENT{Initialize ONNX Runtime IO-binding context}
+    \FOR{each input tensor $t_i \in \mathcal{T}_{\text{in}}$}
+        \STATE $\mathcal{B}.\text{bind\_input}(\text{name}_i, \text{device} = \text{``cuda''}, \text{ptr} = t_i.\text{data\_ptr}())$
+    \ENDFOR
+    \STATE Pre-allocate output tensors $\mathcal{T}_{\text{out}}$ directly on GPU VRAM
+    \FOR{each output tensor $y_j \in \mathcal{T}_{\text{out}}$}
+        \STATE $\mathcal{B}.\text{bind\_output}(\text{name}_j, \text{device} = \text{``cuda''}, \text{ptr} = y_j.\text{data\_ptr}())$
+    \ENDFOR
+    \STATE $\mathcal{E}.\text{run\_with\_iobinding}(\mathcal{B})$
+\ELSE[$\mathcal{E}$ is TensorRT]
+    \FOR{each input tensor $t_i \in \mathcal{T}_{\text{in}}$}
+        \STATE $\mathcal{E}.\text{set\_input\_shape}(\text{name}_i, t_i.\text{shape})$
+        \STATE $\mathcal{E}.\text{set\_tensor\_address}(\text{name}_i, t_i.\text{data\_ptr}())$ \COMMENT{Register VRAM address}
+    \ENDFOR
+    \STATE Pre-allocate output tensors $\mathcal{T}_{\text{out}}$ directly on GPU VRAM
+    \FOR{each output tensor $y_j \in \mathcal{T}_{\text{out}}$}
+        \STATE $\mathcal{E}.\text{set\_tensor\_address}(\text{name}_j, y_j.\text{data\_ptr}())$
+    \ENDFOR
+    \STATE $\mathcal{E}.\text{execute\_async\_v3}(\mathcal{S})$
+\ENDIF
+\RETURN $\mathcal{T}_{\text{out}}$
+\end{algorithmic}
+\end{algorithm}
 
 By binding raw VRAM data pointers directly ($\text{buffer\_ptr} = \text{t.data\_ptr()}$), KernelLens achieves $O(1)$ zero-copy runtime overhead:
 \begin{equation}
