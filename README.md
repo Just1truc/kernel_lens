@@ -6,6 +6,7 @@
   # Automated Triton-to-C++ Compiler for Enterprise Inference Runtimes
 
   [![PyPI Version](https://img.shields.io/pypi/v/kernel-lens.svg?color=blue)](https://pypi.org/project/kernel-lens/)
+  [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23194523.svg)](https://doi.org/10.5281/zenodo.23194523)
   [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
   [![CUDA 12.0+](https://img.shields.io/badge/CUDA-12.0+-76B900.svg?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
@@ -248,15 +249,21 @@ pdflatex -interaction=nonstopmode architecture_report.tex
 
 ## Citation & Research Paper
 
-If you use **KernelLens** in your research, please cite our technical report:
+If you use **KernelLens** in your research, please cite our publication:
+
+```text
+Duc, J. (2026). KernelLens: Deploying Triton Kernels to C++ Inference Engines (Version 1.1.9). Galiad Research. https://doi.org/10.5281/zenodo.23194523
+```
 
 ```bibtex
 @article{duc2026kernellens,
-  title={KernelLens: Automated Compilation and Zero-Copy C++ Plugin Synthesis for PyTorch Triton Kernels in Enterprise Inference Runtimes},
+  title={KernelLens: Deploying Triton Kernels to C++ Inference Engines},
   author={Duc, Justin},
   institution={Galiad Research},
   year={2026},
-  url={https://github.com/Just1truc/kernel_lens}
+  version={1.1.9},
+  doi={10.5281/zenodo.23194523},
+  url={https://doi.org/10.5281/zenodo.23194523}
 }
 ```
 
