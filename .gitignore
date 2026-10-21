@@ -38,3 +38,7 @@ site/
 *.fdb_latexmk
 *.synctex.gz
 \#*\#
+
+# Anonymized TMLR submission artifacts (generated, not part of the repo)
+kernel_lens_tmlr_submission.*
+kernel_lens_supplementary.zip

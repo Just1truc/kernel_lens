@@ -24,7 +24,6 @@ SCRIPTS = [
     "generate_plots.py",
     "make_d2_diagrams.py",
     "make_figures_v2.py",
-    "make_paper_figures.py",
 ]
 TEXT_EXT = {".py", ".md", ".txt", ".toml", ".cfg", ".json", ".cu",
             ".cuh", ".h", ".sh", ".yaml", ".yml", ".in", ".rst", ""}

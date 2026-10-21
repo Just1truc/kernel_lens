@@ -168,8 +168,8 @@ Raw measurement JSON is committed under [`docs/assets/data/`](docs/assets/data/)
 
 ## Technical report
 
-The LaTeX source is [`architecture_report.tex`](architecture_report.tex); the TMLR
-variant is generated from it with `python3 scripts/make_tmlr.py`.
+The paper source is [`kernel_lens_fresh.tex`](kernel_lens_fresh.tex); the TMLR
+variant is generated from it with `python3 scripts/make_tmlr_fresh.py`.
 
 ```bibtex
 @article{duc2026kernellens,
@@ -177,7 +177,7 @@ variant is generated from it with `python3 scripts/make_tmlr.py`.
   author      = {Duc, Justin},
   institution = {Galiad Research},
   year        = {2026},
-  version     = {1.1.9},
+  version     = {1.2.0},
   doi         = {10.5281/zenodo.23194523},
   url         = {https://doi.org/10.5281/zenodo.23194523}
 }
