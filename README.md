@@ -1,97 +1,97 @@
 # KernelLens
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/Just1truc/kernel_lens/main/logo.png" style="border-radius: 50%; margin-bottom: 12px;" alt="KernelLens Logo" width="180"/>
-  
-  # Automated Triton-to-C++ Compiler for Enterprise Inference Runtimes
+  <img src="https://raw.githubusercontent.com/Just1truc/kernel_lens/main/logo.png" style="border-radius: 50%; margin-bottom: 12px;" alt="KernelLens Logo" width="170"/>
+
+  # Compiling PyTorch Triton Kernels into C++ Inference Plugins
 
   [![PyPI Version](https://img.shields.io/pypi/v/kernel-lens.svg?color=blue)](https://pypi.org/project/kernel-lens/)
   [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23194523.svg)](https://doi.org/10.5281/zenodo.23194523)
   [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
   [![CUDA 12.0+](https://img.shields.io/badge/CUDA-12.0+-76B900.svg?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-  [![GitHub Main](https://img.shields.io/github/actions/workflow/status/Just1truc/kernel_lens/ci.yml?branch=main&label=build)](https://github.com/Just1truc/kernel_lens)
 
-  **Bridge the gap between PyTorch Triton research and high-throughput C++ inference engines.**
-  
-  *Automated Dual-Pass Tracing • SymPy AST Grid Transpilation • Zero-Copy VRAM IO-Binding • Pure C++ Plugin Synthesis*
+  **📖 Documentation & research results: <https://just1truc.github.io/kernel_lens/>**
+
+  *Dual-pass tracing • ONNX custom-node injection • automated OrtCustomOp / TensorRT plugin synthesis • zero-copy VRAM binding • no C++ boilerplate*
 </div>
 
 <br/>
 
-## Overview
+## What it is
 
-**KernelLens** is an open-source compiler framework designed to transform PyTorch models containing custom `@triton.jit` kernels into standalone, high-performance C++ shared libraries (`.so`). 
-
-It generates native **ONNX Runtime (`OrtCustomOp`)** and **NVIDIA TensorRT 10.x (`nvinfer1::IPluginV2DynamicExt`)** plugins automatically—eliminating thousands of lines of C++ boilerplate, manual `nvcc` build scripts and host-side memory copies.
+**KernelLens** compiles a PyTorch model that contains custom `@triton.jit` kernels
+into native C++ artifacts for **ONNX Runtime** (`OrtCustomOp`) and **NVIDIA
+TensorRT 10.x** (`nvinfer1::IPluginV2DynamicExt`). You write Triton in Python; it
+emits the C++ plugin, builds the `.so`, and runs it with **zero-copy VRAM
+binding** — no manual C++ and no Python in the serving path.
 
 ```
-+-----------------------------------------------------------------------------------+
-|                            KernelLens Pipeline Flow                              |
-+-----------------------------------------------------------------------------------+
-|  PyTorch Module (@triton.jit)                                                    |
-|        │                                                                          |
-|        ▼                                                                          |
-|  Phase 1: Dual-Pass Tracing & AST Inspection (Intercept PTX, Smem, Grids)         |
-|        │                                                                          |
-|        ▼                                                                          |
-|  Phase 2: Base ONNX Graph Transformation (Inject Custom Domain Nodes)             |
-|        │                                                                          |
-|        ▼                                                                          |
-|  Phase 3: Automated C++/CUDA Code Synthesis (Generate OrtCustomOp & TRT Plugins)  |
-|        │                                                                          |
-|        ▼                                                                          |
-|  Phase 4: Zero-Copy C++ Runtime Execution (Direct VRAM Pointer Binding)           |
-+-----------------------------------------------------------------------------------+
+kl.compile(model, sample_input, backends=["onnx", "tensorrt"])
+   │
+   ├─ trace          eager PTX + symbolic grid + AST argument taxonomy
+   ├─ rewrite        triton_custom node injection  ─▶  <name>.onnx
+   ├─ synthesize     OrtCustomOp / IPluginV2DynamicExt sources
+   └─ build          nvcc / g++  ─▶  libtriton_*.so  (+ TRT engine)
+
+compiled_model.run(inputs, backend="onnx"|"tensorrt")
+   └─ zero-copy binding (IOBinding / set_tensor_address)  ─▶  torch tensors
 ```
 
-## Key Features
+## Key features
 
-* **Zero C++ Boilerplate**: Automatically inspects Triton kernel signatures and synthesizes production-ready C++ plugin code (`.cu`, `.cpp`, `.h`) and compiled shared libraries (`.so`).
-* **SymPy Dynamic Grid AST Transpilation**: Parses Triton grid launchers (e.g., `triton.cdiv(M, BLOCK_SIZE)`) into pure C++ integer arithmetic evaluated dynamically at inference time ($< 0.5 \ \mu\text{s}$ CPU overhead).
-* **Zero-Copy VRAM Pointer Mapping**: Directly binds PyTorch / C++ VRAM memory addresses (`data_ptr()`) into ONNX Runtime and TensorRT execution contexts, achieving $O(1)$ allocation overhead.
-* **16-Byte Memory Alignment Guards**: Automatically injects dynamic 16-byte address check guards in C++ to prevent illegal unaligned vector load traps (`LDG.128`) on sub-aligned tensor slices.
-* **Toolchain & Hardware Hardening**: Features automatic PTX ISA version clamping (`.version 9.3` $\rightarrow$ `.version 9.0`) for NVIDIA Blackwell (`sm_120a`) GPU driver compatibility.
-* **FP8 & Sub-Byte (INT4) Support**: Native 1-byte pointer mapping (`GetTensorData<uint8_t>()`) for quantized Tensor Core acceleration.
-* **Cold-Start Disk Caching**: Caches compiled C++ dynamic libraries (`.so`) and TensorRT engines (`.engine`) for instant cold-start loading in production.
+- **Dual-pass tracing** — a concrete eager pass captures the real compiled PTX,
+  shared memory and strides; a symbolic `make_fx` pass captures dynamic launch
+  grids; a static `tl.load`/`tl.store` AST scan classifies each argument as
+  input, output or in-place.
+- **Automated plugin synthesis** — generates `OrtCustomOp` and
+  `IPluginV2DynamicExt` C++ sources, reconstructs the PTX entry-slot ABI, and
+  compiles them with `nvcc`/`g++`.
+- **Dynamic grids in C++** — launch-grid expressions are transpiled to C++
+  integer math over runtime shapes, so one plugin serves dynamic batch and
+  sequence lengths.
+- **Zero-copy VRAM binding** — PyTorch `data_ptr()` values are registered
+  directly with each engine; no host staging copies.
+- **Blackwell PTX ISA clamping** — a Triton-generated `.version 9.3` header is
+  rewritten to `.version 9.0` so a CUDA driver JIT can load `sm_120a` PTX.
+- **FP8 & sub-byte INT4** — 1-byte pointer mapping (`GetTensorData<uint8_t>()`)
+  and dtype-accurate in-place copies.
+- **Cold-start disk caching** — `.so` and `.engine` artifacts are cached for
+  instant reload via `kl.load(name)`.
+- **Broad module coverage** — a conformance suite (`tests/test_conformance.py`)
+  covers two kernels per graph, the same kernel launched twice, multiple outputs,
+  dynamic scalars, strided and dynamic inputs, loops, conditionals, nested
+  helpers, in-place mutation, 3-D grids, autotune, and fp16/bf16.
+
+> **Honest scope.** KernelLens is research-grade. The documentation clearly
+> separates what is **implemented and measured** from what is **planned**. Two
+> TensorRT paths (in-place aliasing, INT8 dequantisation) are known to be
+> incorrect and are reported rather than hidden. See the
+> [verification page](https://just1truc.github.io/kernel_lens/verification/).
 
 ## Installation
 
-KernelLens can be installed directly from PyPI:
-
 ```bash
-# Core compiler (FX Graph tracing & C++ code synthesis)
-pip install kernel-lens
-
-# Install with target inference backends
-pip install kernel-lens[ort]   # ONNX Runtime support
-pip install kernel-lens[trt]   # NVIDIA TensorRT support
-pip install kernel-lens[all]   # Full backend suite
+pip install kernel-lens          # core compiler
+pip install kernel-lens[ort]     # + ONNX Runtime backend
+pip install kernel-lens[trt]     # + TensorRT backend
+pip install kernel-lens[all]     # both
 ```
 
-### System Requirements
-* **OS**: Linux (x86_64)
-* **Python**: 3.10+
-* **CUDA Toolkit**: 12.0+
-* **PyTorch**: 2.0+
-* **Triton**: 2.1+
+**Requirements:** Linux x86-64, Python ≥ 3.10, CUDA ≥ 12.0, PyTorch ≥ 2.0,
+Triton ≥ 2.1, and `nvcc` + `g++` on `PATH`.
 
 ## Quickstart
 
-Take any standard PyTorch `nn.Module` with a custom `@triton.jit` kernel and compile it for production in **3 lines of Python**:
-
 ```python
-import torch
-import torch.nn as nn
-import triton
-import triton.language as tl
+import torch, triton, triton.language as tl
 import kernel_lens as kl
 
-# 1. Define a custom Triton kernel and Module
 @triton.jit
-def rmsnorm_kernel(x_ptr, weight_ptr, out_ptr, stride_x_b, stride_x_m, stride_out_b, stride_out_m, N: tl.constexpr, eps: tl.constexpr, BLOCK_SIZE: tl.constexpr):
-    pid_b = tl.program_id(0)
-    pid_m = tl.program_id(1)
+def rmsnorm_kernel(x_ptr, weight_ptr, out_ptr,
+                   stride_x_b, stride_x_m, stride_out_b, stride_out_m,
+                   N: tl.constexpr, eps: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid_b, pid_m = tl.program_id(0), tl.program_id(1)
     row_x = x_ptr + pid_b * stride_x_b + pid_m * stride_x_m
     row_out = out_ptr + pid_b * stride_out_b + pid_m * stride_out_m
     cols = tl.arange(0, BLOCK_SIZE)
@@ -99,174 +99,90 @@ def rmsnorm_kernel(x_ptr, weight_ptr, out_ptr, stride_x_b, stride_x_m, stride_ou
     x = tl.load(row_x + cols, mask=mask, other=0.0)
     w = tl.load(weight_ptr + cols, mask=mask, other=1.0)
     var = tl.sum(x * x, axis=0) / N
-    rsqrt = tl.rsqrt(var + eps)
-    tl.store(row_out + cols, x * rsqrt * w, mask=mask)
+    tl.store(row_out + cols, x * tl.rsqrt(var + eps) * w, mask=mask)
 
-class RMSNormModule(nn.Module):
-    def __init__(self, dim: int):
+class RMSNorm(torch.nn.Module):
+    def __init__(self, dim):
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(dim, dtype=torch.float32))
-
-    def forward(self, x: torch.Tensor):
+        self.weight = torch.nn.Parameter(torch.ones(dim))
+    def forward(self, x):
         B, M, N = x.shape
         out = torch.empty_like(x)
-        rmsnorm_kernel[(B, M)](x, self.weight, out, x.stride(0), x.stride(1), out.stride(0), out.stride(1), N=N, eps=1e-6, BLOCK_SIZE=triton.next_power_of_2(N))
+        rmsnorm_kernel[(B, M)](x, self.weight, out, x.stride(0), x.stride(1),
+                               out.stride(0), out.stride(1),
+                               N=N, eps=1e-6, BLOCK_SIZE=triton.next_power_of_2(N))
         return out
 
-# 2. Compile to native C++ backends
-x = torch.randn(4, 512, 4096, device="cuda", dtype=torch.float32)
-model = RMSNormModule(4096).cuda()
-
-compiled_model = kl.compile(
-    model, 
-    (x,), 
-    name="llama3_rmsnorm", 
-    backends=["onnx", "tensorrt"]
-)
-
-# 3. Execute zero-copy inference in pure C++ engines
-ort_output = compiled_model.run((x,), backend="onnx")
-trt_output = compiled_model.run((x,), backend="tensorrt")
+x = torch.randn(4, 512, 4096, device="cuda")
+compiled = kl.compile(RMSNorm(4096).cuda(), (x,), name="llama3_rmsnorm",
+                      backends=["onnx", "tensorrt"])
+out_ort = compiled.run((x,), backend="onnx")
+out_trt = compiled.run((x,), backend="tensorrt")
 ```
 
-## Empirical GPU Latency Benchmark
+## Results at a glance
 
-Evaluated on NVIDIA GPU across state-of-the-art LLM operators:
+Measured on an **RTX 5060 Ti (Blackwell, `sm_120a`)**, CUDA 12.8, PyTorch 2.14,
+Triton 3.8, ONNX Runtime 1.30, TensorRT 10.16. Full tables and methodology are on
+the [results page](https://just1truc.github.io/kernel_lens/#results).
 
-| Operator / Workload | PyTorch Eager | `torch.compile` | Native Triton | KernelLens TRT | KernelLens ORT | Speedup vs Eager |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Mamba SSM Recurrence ($T=256$)** | $4.99\text{ ms}$ | $0.72\text{ ms}$ | $0.70\text{ ms}$ | **$0.68\text{ ms}$** | $0.71\text{ ms}$ | **$7.0\times$** |
-| **Fused Cross-Entropy ($V=32\text{K}$)** | $1.85\text{ ms}$ | $0.42\text{ ms}$ | $0.35\text{ ms}$ | **$0.31\text{ ms}$** | $0.33\text{ ms}$ | **$5.6\times$** |
-| **LLaMA 3 RMSNorm ($D=4096$)** | $1.58\text{ ms}$ | $0.44\text{ ms}$ | $0.45\text{ ms}$ | **$0.43\text{ ms}$** | $0.46\text{ ms}$ | **$3.4\times$** |
-| **PaLM SwiGLU Activation ($N=4096$)** | $1.09\text{ ms}$ | $0.65\text{ ms}$ | $0.64\text{ ms}$ | **$0.62\text{ ms}$** | $0.64\text{ ms}$ | **$1.7\times$** |
-| **Qwen 2.5 RoPE Embedding ($D=128$)** | $2.03\text{ ms}$ | $0.45\text{ ms}$ | $0.51\text{ ms}$ | **$0.44\text{ ms}$** | $0.48\text{ ms}$ | **$4.2\times$** |
+- **Fold + keep, and it pays**: on a two-layer block whose attention is a custom
+  squared-ReLU flash kernel, KernelLens runs it in **7.63 ms**, versus **15.15 ms**
+  for the folded-only `torch.compile` formulation and **28.04 ms** for eager
+  folding — **1.99×** and **3.68×** faster — and **1.08×** faster than the
+  unfused Triton-kernel path. The engine folds the standard layers; the kernel
+  keeps the operations folding cannot express.
+- **Exact parity with native Triton** (`MaxDiff = 0.00e+00`) for LLaMA 3 RMSNorm,
+  PaLM SwiGLU, Qwen 2.5 RoPE, Liger fused cross-entropy, in-place mutation and
+  the quantized GEMMs, on both backends.
+- **Lowest VRAM** in a 4-layer LLaMA decoder: **464 MB** peak vs 478 MB (eager)
+  and 473 MB (`torch.compile`), with the fastest time-to-first-token (4.14 ms vs
+  7.85/7.92 ms).
 
-*All runs achieve exact numerical parity against native Triton execution.*
+## Documentation
 
-## System Architecture
+| Section | Contents |
+| :--- | :--- |
+| [Problem](https://just1truc.github.io/kernel_lens/#problem) | The five gaps a naive export hits |
+| [Pipeline](https://just1truc.github.io/kernel_lens/#pipeline) | What you build by hand vs. the compile/run pipeline |
+| [Results](https://just1truc.github.io/kernel_lens/#results) | Folding + kernels, parity, latency, end-to-end |
+| [Install & API](https://just1truc.github.io/kernel_lens/#install) | Installation and API reference |
+| [Status](https://just1truc.github.io/kernel_lens/#status) | Roadmap |
+| [Paper](https://just1truc.github.io/kernel_lens/#paper) | Abstract and citation |
 
-```
-                                  KernelLens Compiler Pipeline
-  
-  [ PyTorch Model ] ──► Dual-Pass Tracing ──► AST Grid Inspection ──► Manifest Builder
-                                                                           │
-  [ C++ Exec Engine ] ◄── Dynamic Plugin Load ◄── nvcc / g++ Build ◄───────┴── Synthesized C++/CUDA Code
-```
-
-1. **Phase 1: Dual-Pass Tracing**: Intercepts eager Triton launches to record PTX strings, shared memory bytes and scalar arguments. A secondary PyTorch FX proxy pass captures dynamic grid expressions.
-2. **Phase 2: Base ONNX Graph Transformation**: Injects custom domain nodes (`triton_custom::<kernel_name>`) and binds CPU scalar parameters (`OrtMemTypeCPUInput`).
-3. **Phase 3: Code Synthesis & Toolchain Hardening**: Emits complete C++ source files implementing `Ort::CustomOp` and `nvinfer1::IPluginV2DynamicExt`. Injects 16-byte alignment guards and applies PTX version clamping.
-4. **Phase 4: Zero-Copy Runtime Execution**: Dynamically loads shared libraries via `ctypes.CDLL` and binds GPU VRAM pointers directly to execution contexts.
-
-## Advanced Usage & Native Debugging
-
-### Disk Caching & Production Reloading
-Once compiled, KernelLens persists plugins to disk. Reload existing engines instantly without recompilation:
-
-```python
-# Load previously compiled C++ plugins directly from disk
-engine = kl.load("llama3_rmsnorm")
-output = engine.run((x,), backend="tensorrt")
-```
-
-### Native C++ Debugging Suite
-Enable verbose tripwire logging to inspect generated C++ grid calculations and GPU memory addresses before `cuLaunchKernel`:
+## Reproduce the results
 
 ```bash
-KERNEL_LENS_DEBUG=1 python my_inference_script.py
-```
-
-## Step-by-Step Reproduction & Verification Guide
-
-Follow these steps to reproduce the empirical benchmarks and verify system correctness:
-
-### Step 1: Environment Setup
-Clone the repository and install dependencies in editable mode:
-
-```bash
-git clone https://github.com/Just1truc/kernel_lens.git
-cd kernel_lens
+git clone https://github.com/Just1truc/kernel_lens.git && cd kernel_lens
 pip install -e .[all]
+
+python tests/benchmark_folding_vs_triton.py    # folding + kernels vs the alternatives
+python tests/test_conformance.py               # module-pattern conformance (14 patterns)
+python tests/test_research_kernels.py          # numerical parity
+python tests/benchmark_research_kernels.py     # single-operator latency
+python tests/benchmark_e2e_llama.py            # end-to-end decoder
+python tests/test_fp8_gemm.py                  # FP8 Tensor Core path
 ```
 
-### Step 2: Verify Research Kernel Numerical Parity
-Run the research model operator test suite evaluating LLaMA 3 RMSNorm, SwiGLU, RoPE and Liger-Kernel Fused Cross-Entropy:
+Raw measurement JSON is committed under [`docs/assets/data/`](docs/assets/data/).
 
-```bash
-python3 tests/test_research_kernels.py
-```
+## Technical report
 
-*Expected Output:*
-```text
-[Passed] Llama 3 RMSNorm Kernel (MaxDiff: 0.000000e+00)
-[Passed] SwiGLU Fused Activation Kernel (MaxDiff: 0.000000e+00)
-[Passed] RoPE Positional Embedding Kernel (MaxDiff: 0.000000e+00)
-[Passed] Fused Softmax & Cross Entropy Loss Kernel (MaxDiff: 0.000000e+00)
-ALL RECENT RESEARCH TRITON KERNELS PASSED WITH KERNEL LENS!
-```
-
-### Step 3: Run End-to-End Multi-Layer Transformer Decoder Benchmarks
-Run the 4-layer LLaMA Transformer decoder pipeline benchmark comparing PyTorch Eager, `torch.compile`, ONNX Runtime and TensorRT 10.x C++ plugins:
-
-```bash
-python3 tests/benchmark_e2e_llama.py
-```
-
-*Expected Output:*
-```text
---- MEASURED REAL EMPIRICAL END-TO-END RESULTS ---
-Configuration                       | TTFT (S=512) | ITL (S=1)    | Total (128 tok) | Peak VRAM 
------------------------------------------------------------------------------------------------
-PyTorch Eager + Triton              |    42.77 ms |     2.68 ms |        0.384 s |   453.2 MB
-torch.compile (Inductor)            |    41.81 ms |     2.31 ms |        0.335 s |   451.2 MB
-KernelLens C++ Plugins (ORT)        |    45.38 ms |     2.97 ms |        0.423 s |   440.3 MB
-KernelLens TensorRT 10.x Plugin     |    43.90 ms |     2.23 ms |        0.328 s |   440.3 MB
-
-Saved real end-to-end benchmark results to measured_e2e_llama.json
-```
-
-### Step 4: Verify Edge-Case Stress Tests & Architectural Fixes
-Verify dynamic scalar parameters, 4D high-rank launch grids and nested stores:
-
-```bash
-python3 tests/test_architectural_fixes.py
-python3 tests/test_edge_cases.py
-```
-
-*Expected Output:*
-```text
-ALL ARCHITECTURAL FIX VERIFICATION TESTS PASSED SUCCESSFULLY!
-```
-
-### Step 5: Recompile Technical Report LaTeX
-Verify clean PDF generation of the 19-page research paper:
-
-```bash
-pdflatex -interaction=nonstopmode architecture_report.tex
-```
-
-*Expected Output:* `Output written on architecture_report.pdf (19 pages)`
-
-## Citation & Research Paper
-
-If you use **KernelLens** in your research, please cite our publication:
-
-```text
-Duc, J. (2026). KernelLens: Deploying Triton Kernels to C++ Inference Engines (Version 1.1.9). Galiad Research. https://doi.org/10.5281/zenodo.23194523
-```
+The LaTeX source is [`architecture_report.tex`](architecture_report.tex); the TMLR
+variant is generated from it with `python3 scripts/make_tmlr.py`.
 
 ```bibtex
 @article{duc2026kernellens,
-  title={KernelLens: Deploying Triton Kernels to C++ Inference Engines},
-  author={Duc, Justin},
-  institution={Galiad Research},
-  year={2026},
-  version={1.1.9},
-  doi={10.5281/zenodo.23194523},
-  url={https://doi.org/10.5281/zenodo.23194523}
+  title       = {KernelLens: Compiling PyTorch Triton Kernels into C++ Inference Plugins},
+  author      = {Duc, Justin},
+  institution = {Galiad Research},
+  year        = {2026},
+  version     = {1.1.9},
+  doi         = {10.5281/zenodo.23194523},
+  url         = {https://doi.org/10.5281/zenodo.23194523}
 }
 ```
 
 ## License
 
-KernelLens is open-sourced under the [MIT License](LICENSE).
+MIT — see [LICENSE](LICENSE).

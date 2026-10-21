@@ -1,0 +1,8 @@
+{
+  "A. Folded only (eager, standard ops)": 28.04468017578125,
+  "A. Folded only (torch.compile)": 15.14605712890625,
+  "B. Kernels only (eager Triton)": 8.242919921875,
+  "B. Kernels only (torch.compile)": 7.5501416015625,
+  "C. Both (KernelLens ORT)": 9.271923217773438,
+  "C. Both (KernelLens TensorRT)": 7.633385009765625
+}

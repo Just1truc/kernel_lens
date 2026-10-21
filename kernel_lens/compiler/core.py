@@ -1,5 +1,6 @@
 import os
 import re
+import tempfile
 import torch
 import triton
 from torch.fx.experimental.proxy_tensor import make_fx
@@ -45,7 +46,7 @@ def _get_cache_dir(model_name: str, inputs: tuple) -> str:
     try:
         os.makedirs(cache_base, exist_ok=True)
     except Exception:
-        cache_base = "/home/ostentatoire/.gemini/antigravity/brain/6049e857-7471-4e1f-9edc-849fb7b695b8/scratch/.kernel_lens_cache"
+        cache_base = os.path.join(tempfile.gettempdir(), "kernel_lens_cache")
         os.makedirs(cache_base, exist_ok=True)
     cache_path = os.path.join(cache_base, model_name)
     os.makedirs(cache_path, exist_ok=True)
@@ -143,9 +144,13 @@ def compile(
         return CompiledModel(cache_dir, name, backends)
 
     safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', name)
-    for m in manifests:
+    for idx, m in enumerate(manifests):
         if not m.kernel_name.endswith(f"_{safe_name}"):
             m.kernel_name = f"{m.kernel_name}_{safe_name}"
+        # Make the name unique per launch: the same kernel can be launched more
+        # than once in a forward pass, with different scalars or shapes, and each
+        # launch needs its own ONNX op and plugin.
+        m.kernel_name = f"{m.kernel_name}__{idx}"
 
     manifests = analyze_grid_asts(manifests, handler=interaction_handler)
 
@@ -155,11 +160,26 @@ def compile(
     onnx_path = os.path.join(cache_dir, f"{name}.onnx")
     saved_args = _export_to_onnx(model, inputs, onnx_path, manifests)
     
-    # 2. Compile ONNX Runtime Plugins
-    if "onnx" in backends:
+    # 2. Compile ONNX Runtime Plugins.
+    #    TensorRT's tensor path corrupts custom plugins that use raw INT8 tensors
+    #    or in-place-aliased buffers, so build the exact ORT plugin as a fallback
+    #    and record the hint for the runtime.
+    has_int8_tensors = any(
+        ("int8" in str(a.dtype).lower() or "uint8" in str(a.dtype).lower())
+        for m in manifests for a in m.arguments if getattr(a, "shape", None)
+    )
+    has_inplace = any(a.kind == "inplace" for m in manifests for a in m.arguments)
+    trt_needs_ort_fallback = has_int8_tensors or has_inplace
+    if "onnx" in backends or ("tensorrt" in backends and trt_needs_ort_fallback):
         ort_plugins_dir = os.path.join(cache_dir, "ort_plugins")
         generate_ort_bindings(manifests, ort_plugins_dir)
         build_ort_plugin(ort_plugins_dir, cache_dir)
+    if "tensorrt" in backends and trt_needs_ort_fallback:
+        try:
+            with open(os.path.join(cache_dir, "trt_use_ort"), "w") as f:
+                f.write("1")
+        except Exception:
+            pass
 
     # 3. Compile TensorRT Plugins
     if "tensorrt" in backends:
@@ -185,6 +205,14 @@ def compile(
         except Exception:
             pass
 
+    try:
+        torch.save(
+            {"output_shapes": output_shapes, "output_strides": output_strides, "output_dtypes": output_dtypes},
+            os.path.join(cache_dir, "output_meta.pt"),
+        )
+    except Exception:
+        pass
+
     return CompiledModel(cache_dir, name, backends, output_shapes=output_shapes, output_strides=output_strides, output_dtypes=output_dtypes, saved_args=saved_args)
 
 def load(name: str) -> CompiledModel:
@@ -194,7 +222,7 @@ def load(name: str) -> CompiledModel:
     cache_base = os.environ.get("KERNEL_LENS_CACHE_DIR", os.path.join(os.path.expanduser("~"), ".kernel_lens_cache"))
     cache_dir = os.path.join(cache_base, name)
     if not os.path.exists(cache_dir):
-        fallback_dir = os.path.join("/home/ostentatoire/.gemini/antigravity/brain/6049e857-7471-4e1f-9edc-849fb7b695b8/scratch/.kernel_lens_cache", name)
+        fallback_dir = os.path.join(tempfile.gettempdir(), "kernel_lens_cache", name)
         if os.path.exists(fallback_dir):
             cache_dir = fallback_dir
         else:
@@ -217,7 +245,18 @@ def load(name: str) -> CompiledModel:
         except Exception:
             pass
 
-    return CompiledModel(cache_dir, name, backends, saved_args=saved_args)
+    output_meta = {}
+    meta_path = os.path.join(cache_dir, "output_meta.pt")
+    if os.path.exists(meta_path):
+        try:
+            output_meta = torch.load(meta_path)
+        except Exception:
+            output_meta = {}
+
+    return CompiledModel(cache_dir, name, backends, saved_args=saved_args,
+                         output_shapes=output_meta.get("output_shapes"),
+                         output_strides=output_meta.get("output_strides"),
+                         output_dtypes=output_meta.get("output_dtypes"))
 
 def _export_to_onnx(model, inputs, output_path, manifests):
     """

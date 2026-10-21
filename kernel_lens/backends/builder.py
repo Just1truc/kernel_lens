@@ -17,6 +17,24 @@ def get_cuda_home() -> str:
     import sys
     return sys.prefix
 
+def find_cuda_include(cuda_home: str) -> str:
+    """
+    Locates a CUDA include directory that actually contains the runtime header
+    ``cuda_runtime_api.h``. Conda-provided CUDA toolkits ship the full host
+    header set under ``<cuda_home>/targets/<triple>/include`` and leave
+    ``<cuda_home>/include`` empty (or missing), so that layout must be probed too.
+    """
+    candidates = [os.path.join(cuda_home, "include")]
+    targets_dir = os.path.join(cuda_home, "targets")
+    if os.path.isdir(targets_dir):
+        for triple in sorted(os.listdir(targets_dir)):
+            candidates.append(os.path.join(targets_dir, triple, "include"))
+    candidates += ["/usr/local/cuda/include", "/usr/local/cuda-12/include", "/usr/local/cuda-11/include"]
+    for cand in candidates:
+        if os.path.exists(os.path.join(cand, "cuda_runtime_api.h")):
+            return cand
+    return candidates[0]
+
 def ensure_cuda_compat():
     """
     Checks if Conda's CUDA toolkit crt/math_functions.h has the known glibc 2.38+ incompatibility bug
@@ -37,9 +55,18 @@ def ensure_cuda_compat():
         home = os.path.expanduser("~")
         for sub in ["miniconda3", "miniconda", "anaconda3", "anaconda", "TRELLIS.2/miniconda3"]:
             search_dirs.append(os.path.join(home, sub))
-        
+
+        # nvcc resolves its CRT headers from <base>/targets/<triple>/include (not
+        # <base>/include) on most conda CUDA toolkits, so both layouts must be patched.
+        candidates = []
         for base_dir in search_dirs:
-            math_hdr = os.path.join(base_dir, "include", "crt", "math_functions.h")
+            candidates.append(os.path.join(base_dir, "include", "crt", "math_functions.h"))
+            targets_dir = os.path.join(base_dir, "targets")
+            if os.path.isdir(targets_dir):
+                for triple in os.listdir(targets_dir):
+                    candidates.append(os.path.join(targets_dir, triple, "include", "crt", "math_functions.h"))
+
+        for math_hdr in candidates:
             if os.path.exists(math_hdr) and os.access(math_hdr, os.W_OK):
                 with open(math_hdr, "r") as f:
                     content = f.read()
@@ -176,7 +203,7 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
     """
     ensure_cuda_compat()
     cuda_home = get_cuda_home()
-    cuda_inc = os.path.join(cuda_home, "include")
+    cuda_inc = find_cuda_include(cuda_home)
     cuda_lib = "/usr/local/cuda/lib64"
     for cand in [
         os.path.join(cuda_home, "lib64"),

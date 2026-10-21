@@ -41,13 +41,13 @@ def get_onnx_node_class(kernel_name, manifest):
 
 class TritonGlobalONNXExporter:
     def __init__(self, manifests, original_inputs=None):
-        self.manifest_map = {}
+        self.manifest_queues = {}
         for m in manifests:
             if hasattr(m, 'fn') and m.fn is not None:
-                self.manifest_map[m.fn.__name__] = m
-            self.manifest_map[m.kernel_name] = m
+                self.manifest_queues.setdefault(m.fn.__name__, []).append(m)
         self.original_inputs = original_inputs
         self.patches = []
+        self.launch_counters = {}
 
     def __enter__(self):
         orig_getitem = triton.JITFunction.__getitem__
@@ -86,8 +86,11 @@ class TritonGlobalONNXExporter:
 
                 clean_kwargs = {k: unwrap(v) for k, v in kwargs.items()}
                 
-                if kernel_name in self.manifest_map:
-                    manifest = self.manifest_map[kernel_name]
+                _q = self.manifest_queues.get(kernel_name, [])
+                _i = self.launch_counters.get(kernel_name, 0)
+                manifest = _q[_i] if _i < len(_q) else None
+                self.launch_counters[kernel_name] = _i + 1
+                if manifest is not None:
                     
                     # 1. RUN THE REAL KERNEL FIRST
                     orig_getitem(jit_self, evaluated_grid)(*clean_args, **clean_kwargs)

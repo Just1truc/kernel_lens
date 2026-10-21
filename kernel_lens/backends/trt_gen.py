@@ -5,6 +5,23 @@ import re
 import os
 from ..compiler.manifest import KernelManifest
 
+def element_size_bytes(dtype_val) -> float:
+    """Best-effort element size (in bytes) for a PyTorch/triton dtype string."""
+    s = str(dtype_val).lower()
+    if any(k in s for k in ('float8', 'e4m3', 'e5m2', 'fp8')):
+        return 1.0
+    if 'bool' in s or 'uint8' in s or 'int8' in s:
+        return 1.0
+    if 'uint4' in s or 'int4' in s:
+        return 0.5
+    if 'int16' in s or 'short' in s:
+        return 2.0
+    if ('float16' in s or 'fp16' in s or 'half' in s or 'bfloat16' in s or 'bf16' in s):
+        return 2.0
+    if 'int64' in s or 'long' in s or 'double' in s or 'float64' in s:
+        return 8.0
+    return 4.0
+
 class TensorRTPluginGenerator:
     def __init__(self, manifests: List[KernelManifest], plugin_namespace: str = "triton_custom", plugin_version: str = "1"):
         self.manifests = manifests
@@ -29,6 +46,8 @@ class TensorRTPluginGenerator:
                 return "nvinfer1::DataType::kBOOL"
             elif 'uint8' in dtype_str or 'int8' in dtype_str or 'int4' in dtype_str or 'uint4' in dtype_str:
                 return "nvinfer1::DataType::kINT8"
+            elif 'bfloat16' in dtype_str or 'bf16' in dtype_str:
+                return "nvinfer1::DataType::kBF16"
             elif 'float16' in dtype_str or 'half' in dtype_str:
                 return "nvinfer1::DataType::kHALF"
             elif 'float' in dtype_str:
@@ -42,7 +61,41 @@ class TensorRTPluginGenerator:
 
         in_args = [a for a in manifest.arguments if a.kind in ('input', 'inplace')]
 
-        supports_format_cxx = "return inOut[pos].format == nvinfer1::TensorFormat::kLINEAR;"
+        # Enforce the dtype the kernel was compiled for, position by position.
+        # Without this TensorRT is free to run the plugin in fp32 (or promote it),
+        # which silently disables the fp16/quantized path.
+        _ordered_in = [a for a in manifest.arguments if a.kind in ('input', 'inplace')]
+        _ordered_sc = [a for a in manifest.arguments if a.kind == 'scalar' and not getattr(a, 'is_constexpr', False)]
+        _ordered_out = [a for a in manifest.arguments if a.kind in ('output', 'inplace')]
+        _pos_types = [get_trt_datatype(a.dtype) for a in (_ordered_in + _ordered_sc + _ordered_out)]
+        _pos_is_tensor = ([True] * len(_ordered_in) + [False] * len(_ordered_sc) + [True] * len(_ordered_out))
+        _types_cpp = ", ".join(_pos_types) if _pos_types else "nvinfer1::DataType::kFLOAT"
+        _is_tensor_cpp = ", ".join("true" if t else "false" for t in _pos_is_tensor) if _pos_is_tensor else "true"
+        type_guard_cxx = (
+            "static const nvinfer1::DataType kExpectedTypes[] = { " + _types_cpp + " };\n"
+            "        static const bool kIsTensor[] = { " + _is_tensor_cpp + " };\n"
+            "        const int kNTypes = (int)(sizeof(kExpectedTypes)/sizeof(kExpectedTypes[0]));\n"
+            "        if (pos < kNTypes && kIsTensor[pos] && inOut[pos].type != kExpectedTypes[pos]) return false;\n"
+        )
+
+        if getattr(manifest, 'layout_agnostic', False):
+            # A pointwise kernel reads a flat buffer, so the physical layout is
+            # irrelevant. Accepting channel-last lets the engine keep the
+            # surrounding convolutions in their native format instead of
+            # inserting reformats around this plugin.
+            supports_format_cxx = type_guard_cxx + (
+                "// Pointwise kernel: layout-agnostic, so channel-last is safe too.\n"
+                "        auto f = inOut[pos].format;\n"
+                "        if (f == nvinfer1::TensorFormat::kLINEAR) return true;\n"
+                "        if (f == nvinfer1::TensorFormat::kHWC8) {\n"
+                "            auto d = inOut[pos].dims;\n"
+                "            int32_t c = (d.nbDims == 4) ? d.d[1] : (d.nbDims > 0 ? d.d[d.nbDims - 1] : 1);\n"
+                "            return (c % 8) == 0;  // require an unpadded channel dim\n"
+                "        }\n"
+                "        return false;"
+            )
+        else:
+            supports_format_cxx = type_guard_cxx + "return inOut[pos].format == nvinfer1::TensorFormat::kLINEAR;"
         
         output_dim_cases = []
         out_args = [a for a in manifest.arguments if a.kind in ('output', 'inplace')]
@@ -70,6 +123,8 @@ class TensorRTPluginGenerator:
 #include <string>
 #include <vector>
 #include <mutex>
+#include <cstdio>
+#include <cstdlib>
 
 
 namespace {self.plugin_namespace}_{manifest.kernel_name} {{
@@ -159,7 +214,6 @@ private:
     def _generate_kernel_cu(self, manifest: KernelManifest) -> str:
         plugin_name = f"{manifest.kernel_name}Plugin"
         ptx_str = manifest.ptx
-        ptx_str = re.sub(r'\.version\s+9\.\d+', '.version 9.0', ptx_str)
         ptx_encoded = json.dumps(ptx_str)
         block_size = (manifest.num_warps if manifest.num_warps > 0 else 4) * 32
         
@@ -261,7 +315,21 @@ private:
 
             if slot["is_ptr"]:
                 if arg and arg.kind == 'input':
-                    arg_setup_lines.append(f"static thread_local const void* tmp_ptr_{slot_idx}; tmp_ptr_{slot_idx} = (const void*)inputs[{in_counter}];")
+                    _esz = element_size_bytes(arg.dtype)
+                    arg_setup_lines.append(f"const void* raw_ptr_{slot_idx} = (const void*)inputs[{in_counter}];")
+                    arg_setup_lines.append(f"static thread_local const void* tmp_ptr_{slot_idx};")
+                    arg_setup_lines.append(f"static thread_local void* align_buf_{slot_idx} = nullptr;")
+                    arg_setup_lines.append(f"static thread_local size_t align_cap_{slot_idx} = 0;")
+                    arg_setup_lines.append(f"if ((reinterpret_cast<uintptr_t>(raw_ptr_{slot_idx}) & 15u) != 0) {{")
+                    arg_setup_lines.append(f"    size_t align_bytes_{slot_idx} = 1; for (int dd = 0; dd < inputDesc[{in_counter}].dims.nbDims; ++dd) align_bytes_{slot_idx} *= inputDesc[{in_counter}].dims.d[dd];")
+                    if _esz == 0.5:
+                        arg_setup_lines.append(f"    align_bytes_{slot_idx} = (align_bytes_{slot_idx} + 1) / 2;")
+                    else:
+                        arg_setup_lines.append(f"    align_bytes_{slot_idx} *= {int(_esz)};")
+                    arg_setup_lines.append(f"    if (align_cap_{slot_idx} < align_bytes_{slot_idx}) {{ if (align_buf_{slot_idx}) cudaFree(align_buf_{slot_idx}); cudaMalloc(&align_buf_{slot_idx}, align_bytes_{slot_idx} + 16); align_cap_{slot_idx} = align_bytes_{slot_idx}; }}")
+                    arg_setup_lines.append(f"    cudaMemcpyAsync(align_buf_{slot_idx}, raw_ptr_{slot_idx}, align_bytes_{slot_idx}, cudaMemcpyDeviceToDevice, stream);")
+                    arg_setup_lines.append(f"    tmp_ptr_{slot_idx} = align_buf_{slot_idx};")
+                    arg_setup_lines.append(f"}} else {{ tmp_ptr_{slot_idx} = raw_ptr_{slot_idx}; }}")
                     arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_ptr_{slot_idx};")
                     in_counter += 1
                 elif arg and arg.kind == 'output':
@@ -273,7 +341,11 @@ private:
                     arg_setup_lines.append(f"void* out_ptr_{slot_idx} = outputs[{out_counter}];")
                     arg_setup_lines.append(f"size_t num_bytes_{slot_idx} = 1;")
                     arg_setup_lines.append(f"for (int d = 0; d < inputDesc[{in_counter}].dims.nbDims; ++d) num_bytes_{slot_idx} *= inputDesc[{in_counter}].dims.d[d];")
-                    arg_setup_lines.append(f"num_bytes_{slot_idx} *= sizeof(float);")
+                    _esz = element_size_bytes(arg.dtype)
+                    if _esz == 0.5:
+                        arg_setup_lines.append(f"num_bytes_{slot_idx} = (num_bytes_{slot_idx} + 1) / 2;")
+                    else:
+                        arg_setup_lines.append(f"num_bytes_{slot_idx} *= {int(_esz)};")
                     arg_setup_lines.append(f"if (in_ptr_{slot_idx} != out_ptr_{slot_idx}) {{ cudaMemcpyAsync(out_ptr_{slot_idx}, in_ptr_{slot_idx}, num_bytes_{slot_idx}, cudaMemcpyDeviceToDevice, stream); }}")
                     arg_setup_lines.append(f"static thread_local void* tmp_ptr_{slot_idx}; tmp_ptr_{slot_idx} = out_ptr_{slot_idx};")
                     arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_ptr_{slot_idx};")
@@ -324,6 +396,7 @@ private:
 #include "{manifest.kernel_name}Plugin.h"
 #include <cuda.h>
 #include <cstring>
+#include <cstdlib>
 #include <iostream>
 
 namespace {self.plugin_namespace}_{manifest.kernel_name} {{
@@ -365,8 +438,28 @@ int32_t {plugin_name}::initialize() noexcept {{
         }}
         CUresult res = cuModuleLoadDataEx(&mModule, PTX_CODE, 0, nullptr, nullptr);
         if (res != CUDA_SUCCESS) {{
-            fprintf(stderr, "TRT_INIT_ERROR: cuModuleLoadDataEx failed with code %d\\n", (int)res);
-            return -1;
+            // Some CUDA driver JITs reject the newest PTX ISA version. Retry with a
+            // clamped .version, then with an older .target, before giving up. The
+            // original (unclamped) PTX is preserved so modern drivers JIT it natively.
+            std::string ptx(PTX_CODE);
+            size_t vp = ptx.find(".version");
+            if (vp != std::string::npos) {{
+                size_t nl = ptx.find('\\n', vp);
+                if (nl != std::string::npos) ptx.replace(vp, nl - vp, ".version 9.0");
+            }}
+            res = cuModuleLoadDataEx(&mModule, ptx.c_str(), 0, nullptr, nullptr);
+            if (res != CUDA_SUCCESS) {{
+                size_t tp = ptx.find(".target");
+                if (tp != std::string::npos) {{
+                    size_t nl = ptx.find('\\n', tp);
+                    if (nl != std::string::npos) ptx.replace(tp, nl - tp, ".target sm_90");
+                }}
+                res = cuModuleLoadDataEx(&mModule, ptx.c_str(), 0, nullptr, nullptr);
+            }}
+            if (res != CUDA_SUCCESS) {{
+                fprintf(stderr, "TRT_INIT_ERROR: cuModuleLoadDataEx failed with code %d\\n", (int)res);
+                return -1;
+            }}
         }}
         res = cuModuleGetFunction(&mKernel, mModule, "{ptx_entry_name}");
         if (res != CUDA_SUCCESS) {{
@@ -400,6 +493,7 @@ int32_t {plugin_name}::enqueue(const nvinfer1::PluginTensorDesc* inputDesc, cons
             return -1;
         }}
     }}
+    if (getenv("KL_DBG")) fprintf(stderr, "[ENQ] in type=%d fmt=%d dims=%d | out type=%d fmt=%d\\n", (int)inputDesc[0].type, (int)inputDesc[0].format, inputDesc[0].dims.nbDims, (int)outputDesc[0].type, (int)outputDesc[0].format);
 
     unsigned int grid_x = std::max(1u, (unsigned int)({grid_x_cxx}));
     unsigned int grid_y = std::max(1u, (unsigned int)({grid_y_cxx}));

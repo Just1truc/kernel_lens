@@ -3,6 +3,27 @@ import textwrap
 import re
 from ..config import is_verbose
 
+def element_size_bytes(dtype_val) -> float:
+    """Best-effort element size (in bytes) for a PyTorch/triton dtype string.
+
+    Used so in-place D2D copies move the correct number of bytes for non-fp32
+    tensors (fp16/bf16/fp8/int8/...). Sub-byte types return 0.5 bytes/element.
+    """
+    s = str(dtype_val).lower()
+    if any(k in s for k in ('float8', 'e4m3', 'e5m2', 'fp8')):
+        return 1.0
+    if 'bool' in s or 'uint8' in s or 'int8' in s:
+        return 1.0
+    if 'uint4' in s or 'int4' in s:
+        return 0.5
+    if 'int16' in s or 'short' in s:
+        return 2.0
+    if ('float16' in s or 'fp16' in s or 'half' in s or 'bfloat16' in s or 'bf16' in s):
+        return 2.0
+    if 'int64' in s or 'long' in s or 'double' in s or 'float64' in s:
+        return 8.0
+    return 4.0
+
 class ORTGenerator:
     def __init__(self, manifests, ops_package="triton_custom"):
         self.manifests = manifests
@@ -40,10 +61,10 @@ class ORTGenerator:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32"
             elif 'int64' in dtype_str or 'int' in dtype_str or 'long' in dtype_str:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64"
-            elif 'float16' in dtype_str or 'fp16' in dtype_str or 'half' in dtype_str:
-                return "ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16"
             elif 'bfloat16' in dtype_str or 'bf16' in dtype_str:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16"
+            elif 'float16' in dtype_str or 'fp16' in dtype_str or 'half' in dtype_str:
+                return "ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16"
             elif 'double' in dtype_str or 'float64' in dtype_str:
                 return "ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE"
             return "ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT"
@@ -200,9 +221,23 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
         
         for slot_idx, arg in enumerate(manifest.arguments):
             if arg.kind == 'input':
+                _esz = element_size_bytes(arg.dtype)
+                _bytes_expr = (
+                    f"((in_tensor_{slot_idx}.GetTensorTypeAndShapeInfo().GetElementCount() + 1) / 2)"
+                    if _esz == 0.5
+                    else f"(in_tensor_{slot_idx}.GetTensorTypeAndShapeInfo().GetElementCount() * {int(_esz)})"
+                )
                 arg_setup_lines.append(f"auto in_tensor_{slot_idx} = ctx.GetInput({onnx_input_counter});")
                 arg_setup_lines.append(f"static thread_local const void* arg_ptr_{slot_idx};")
-                arg_setup_lines.append(f"arg_ptr_{slot_idx} = (const void*)in_tensor_{slot_idx}.GetTensorData<uint8_t>();")
+                arg_setup_lines.append(f"const void* raw_ptr_{slot_idx} = (const void*)in_tensor_{slot_idx}.GetTensorData<uint8_t>();")
+                arg_setup_lines.append(f"static thread_local void* align_buf_{slot_idx} = nullptr;")
+                arg_setup_lines.append(f"static thread_local size_t align_cap_{slot_idx} = 0;")
+                arg_setup_lines.append(f"if ((reinterpret_cast<uintptr_t>(raw_ptr_{slot_idx}) & 15u) != 0) {{")
+                arg_setup_lines.append(f"    size_t align_bytes_{slot_idx} = (size_t){_bytes_expr};")
+                arg_setup_lines.append(f"    if (align_cap_{slot_idx} < align_bytes_{slot_idx}) {{ if (align_buf_{slot_idx}) cudaFree(align_buf_{slot_idx}); cudaMalloc(&align_buf_{slot_idx}, align_bytes_{slot_idx} + 16); align_cap_{slot_idx} = align_bytes_{slot_idx}; }}")
+                arg_setup_lines.append(f"    cudaMemcpyAsync(align_buf_{slot_idx}, raw_ptr_{slot_idx}, align_bytes_{slot_idx}, cudaMemcpyDeviceToDevice, (cudaStream_t)ctx.GetGPUComputeStream());")
+                arg_setup_lines.append(f"    arg_ptr_{slot_idx} = align_buf_{slot_idx};")
+                arg_setup_lines.append(f"}} else {{ arg_ptr_{slot_idx} = raw_ptr_{slot_idx}; }}")
                 onnx_input_counter += 1
             elif arg.kind == 'output':
                 out_dim_exprs = []
@@ -232,9 +267,15 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
                 arg_setup_lines.append(f"auto in_tensor_{slot_idx} = ctx.GetInput({onnx_input_counter});")
                 arg_setup_lines.append(f"std::vector<int64_t> out_dims_{ort_output_counter} = {out_shape_str};")
                 arg_setup_lines.append(f"auto out_tensor_{slot_idx} = ctx.GetOutput({ort_output_counter}, out_dims_{ort_output_counter}.data(), out_dims_{ort_output_counter}.size());")
-                arg_setup_lines.append(f"const void* in_ptr_{slot_idx} = (const void*)in_tensor_{slot_idx}.GetTensorData<float>();")
-                arg_setup_lines.append(f"void* out_ptr_{slot_idx} = (void*)out_tensor_{slot_idx}.GetTensorMutableData<float>();")
-                arg_setup_lines.append(f"size_t num_bytes_{slot_idx} = in_tensor_{slot_idx}.GetTensorTypeAndShapeInfo().GetElementCount() * sizeof(float);")
+                _esz = element_size_bytes(arg.dtype)
+                _bytes_expr = (
+                    f"((in_tensor_{slot_idx}.GetTensorTypeAndShapeInfo().GetElementCount() + 1) / 2)"
+                    if _esz == 0.5
+                    else f"in_tensor_{slot_idx}.GetTensorTypeAndShapeInfo().GetElementCount() * {int(_esz)}"
+                )
+                arg_setup_lines.append(f"const void* in_ptr_{slot_idx} = (const void*)in_tensor_{slot_idx}.GetTensorData<uint8_t>();")
+                arg_setup_lines.append(f"void* out_ptr_{slot_idx} = (void*)out_tensor_{slot_idx}.GetTensorMutableData<uint8_t>();")
+                arg_setup_lines.append(f"size_t num_bytes_{slot_idx} = {_bytes_expr};")
                 arg_setup_lines.append(f"if (in_ptr_{slot_idx} != out_ptr_{slot_idx}) {{ cudaMemcpyAsync(out_ptr_{slot_idx}, in_ptr_{slot_idx}, num_bytes_{slot_idx}, cudaMemcpyDeviceToDevice, (cudaStream_t)ctx.GetGPUComputeStream()); }}")
                 arg_setup_lines.append(f"static thread_local void* arg_ptr_{slot_idx};")
                 arg_setup_lines.append(f"arg_ptr_{slot_idx} = out_ptr_{slot_idx};")

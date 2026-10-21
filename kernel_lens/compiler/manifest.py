@@ -26,6 +26,10 @@ class KernelManifest:
     
     grid_cxx_exprs: List[str] = field(default_factory=list)
     output_dims_cxx_code: str = ""
+
+    # True when the kernel addresses its tensors as a flat buffer (no strides),
+    # so it is layout-agnostic and can accept channel-last plugin formats.
+    layout_agnostic: bool = False
     
     _sym_grid_asts: Tuple[Any, ...] = ()
     _sym_out_asts: Tuple[Any, ...] = ()

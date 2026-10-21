@@ -2,6 +2,35 @@ import os
 import numpy as np
 import torch
 
+
+def _graph_has_int8_custom_inputs(onnx_path: str) -> bool:
+    """True if any triton_custom node consumes an INT8/UINT8 tensor.
+
+    TensorRT treats INT8 network tensors as *quantized* and its INT8 path
+    corrupts custom plugins that use tensor-core `tl.dot` (verified on
+    sm_120a: identical PTX/args/geometry, yet divergent results). For such
+    graphs KernelLens executes the numerically-exact ONNX Runtime plugin.
+    """
+    try:
+        import onnx
+        from onnx import TensorProto
+        m = onnx.load(onnx_path)
+        int8_types = {TensorProto.INT8, TensorProto.UINT8}
+        has_custom = any(n.domain == "triton_custom" for n in m.graph.node)
+        if not has_custom:
+            return False
+        # Intermediate value_info is often absent from torch.onnx exports, so treat
+        # any INT8/UINT8 graph input or initializer as a potential raw-int8 source.
+        for vi in m.graph.input:
+            if vi.type.HasField("tensor_type") and vi.type.tensor_type.elem_type in int8_types:
+                return True
+        for init in m.graph.initializer:
+            if init.data_type in int8_types:
+                return True
+    except Exception:
+        return False
+    return False
+
 class CompiledModel:
     def __init__(self, cache_dir: str, model_name: str, backends: list[str], output_shapes: list = None, output_strides: list = None, output_dtypes: list = None, saved_args: list = None):
         """
@@ -127,20 +156,36 @@ class CompiledModel:
         if self._ort_session is None:
             so_path = os.path.join(self.cache_dir, "ort_plugins", "libtriton_ort_plugins.so")
             onnx_path = os.path.join(self.cache_dir, f"{self.model_name}.onnx")
-            
+
             session_options = ort.SessionOptions()
             session_options.register_custom_ops_library(so_path)
             self._ort_session = ort.InferenceSession(onnx_path, sess_options=session_options, providers=['CUDAExecutionProvider'])
-            
-        io_binding = self._ort_session.io_binding()
+            self._ort_inputs = self._ort_session.get_inputs()
+            self._ort_outputs = self._ort_session.get_outputs()
+            self._ort_binding = self._ort_session.io_binding()
+            self._ort_out_tensors = {}   # (index, shape, dtype) -> cached tensor
+            self._ort_dtype_map = {
+                torch.float32: np.float32, torch.float64: np.float64, torch.float16: np.float16,
+                torch.int64: np.int64, torch.int32: np.int32, torch.int16: np.int16,
+                torch.int8: np.int8, torch.uint8: np.uint8,
+            }
+            if hasattr(torch, 'float8_e4m3fn'):
+                self._ort_dtype_map[torch.float8_e4m3fn] = np.uint8
+            if hasattr(torch, 'float8_e5m2'):
+                self._ort_dtype_map[torch.float8_e5m2] = np.uint8
+            try:
+                self._ort_dtype_map[torch.bfloat16] = np.dtype("bfloat16")
+            except Exception:
+                pass
 
-        session_inputs = self._ort_session.get_inputs()
+        io_binding = self._ort_binding
+        session_inputs = self._ort_inputs
         from ..config import is_verbose, debug_print
         if is_verbose():
             debug_print(f"[ENGINE DEBUG] session_inputs count: {len(session_inputs)}")
             for idx, s in enumerate(session_inputs):
                 debug_print(f"  sess_in {idx}: name='{s.name}', type='{s.type}', shape={s.shape}")
-        
+
         trt_inputs = []
         for i, sess_in in enumerate(session_inputs):
             if i < len(inputs):
@@ -149,8 +194,8 @@ class CompiledModel:
                 inp = self.saved_args[i]
             else:
                 inp = inputs[-1]
-                
-            expected_type = sess_in.type 
+
+            expected_type = sess_in.type
             is_scalar_input = (i >= len(inputs))
             if isinstance(inp, torch.Tensor):
                 t = inp.cpu() if is_scalar_input else (inp if inp.is_cuda else inp.cuda())
@@ -168,61 +213,42 @@ class CompiledModel:
         # 2. BIND INPUTS
         for i, sess_in in enumerate(session_inputs):
             t = trt_inputs[i]
-            torch_to_np_dtype = {
-                torch.float32: np.float32,
-                torch.float64: np.float64,
-                torch.float16: np.float16,
-                torch.int64: np.int64,
-                torch.int32: np.int32,
-                torch.int16: np.int16,
-                torch.int8: np.int8,
-                torch.uint8: np.uint8,
-            }
-            if hasattr(torch, 'float8_e4m3fn'):
-                torch_to_np_dtype[torch.float8_e4m3fn] = np.uint8
-            if hasattr(torch, 'float8_e5m2'):
-                torch_to_np_dtype[torch.float8_e5m2] = np.uint8
-            onnx_type = torch_to_np_dtype.get(t.dtype, np.float32)
+            onnx_type = self._ort_dtype_map.get(t.dtype, np.float32)
             dev_type = 'cpu' if (t.device.type == 'cpu' or i >= len(inputs)) else 'cuda'
             io_binding.bind_input(
                 name=sess_in.name, device_type=dev_type, device_id=0,
                 element_type=onnx_type, shape=tuple(t.shape), buffer_ptr=t.data_ptr()
             )
 
-        # 3. OUTPUT ALLOCATION
+        # 3. OUTPUT ALLOCATION (cached, zero-copy re-bind)
         ort_output_tensors = []
-        for i, sess_out in enumerate(self._ort_session.get_outputs()):
+        for i, sess_out in enumerate(self._ort_outputs):
             if self.output_shapes and i < len(self.output_shapes) and tuple(self.output_shapes[i]) == tuple(trt_inputs[0].shape):
                 out_shape = tuple(self.output_shapes[i])
             else:
                 out_shape = tuple([d if (isinstance(d, int) and d > 0) else trt_inputs[0].shape[j] for j, d in enumerate(sess_out.shape)])
             out_dtype = self.output_dtypes[i] if (self.output_dtypes and i < len(self.output_dtypes)) else torch.float32
-            t = torch.empty(out_shape, device='cuda', dtype=out_dtype)
+            key = (i, out_shape, out_dtype)
+            t = self._ort_out_tensors.get(key)
+            if t is None:
+                t = torch.empty(out_shape, device='cuda', dtype=out_dtype)
+                self._ort_out_tensors[key] = t
             ort_output_tensors.append(t)
 
-        for sess_out, t in zip(self._ort_session.get_outputs(), ort_output_tensors):
-            np_dtype = np.float32
-            if t.dtype == torch.float64: np_dtype = np.float64
-            elif t.dtype == torch.float16: np_dtype = np.float16
-            elif t.dtype == torch.int64: np_dtype = np.int64
-            elif t.dtype == torch.int32: np_dtype = np.int32
-            elif t.dtype == torch.int8: np_dtype = np.int8
-            elif t.dtype == torch.uint8: np_dtype = np.uint8
-            elif hasattr(torch, 'float8_e4m3fn') and t.dtype == torch.float8_e4m3fn: np_dtype = np.uint8
-            elif hasattr(torch, 'float8_e5m2') and t.dtype == torch.float8_e5m2: np_dtype = np.uint8
-
+        for i, (sess_out, t) in enumerate(zip(self._ort_outputs, ort_output_tensors)):
+            np_dtype = self._ort_dtype_map.get(t.dtype, np.float32)
             io_binding.bind_output(
                 name=sess_out.name, device_type='cuda', device_id=0,
                 element_type=np_dtype, shape=tuple(t.shape), buffer_ptr=t.data_ptr()
             )
 
         try:
-            torch.cuda.synchronize()
+            io_binding.synchronize_inputs()
             self._ort_session.run_with_iobinding(io_binding)
-            torch.cuda.synchronize()
+            io_binding.synchronize_outputs()
         except Exception as e:
             raise RuntimeError(f"ORT Execution failed: {e}")
-        
+
         return ort_output_tensors[0] if len(ort_output_tensors) == 1 else tuple(ort_output_tensors)
 
     def _run_trt(self, inputs: tuple):
@@ -238,8 +264,15 @@ class CompiledModel:
         # 1. COLD START CACHE (Ne s'exécute qu'une seule fois)
         # =======================================================
         if not hasattr(self, '_trt_engine'):
-            so_path = os.path.join(self.cache_dir, "trt_plugins", "libtriton_trt_plugins.so")
             onnx_path = os.path.join(self.cache_dir, f"{self.model_name}.onnx")
+            use_ort = (os.path.exists(os.path.join(self.cache_dir, "trt_use_ort"))
+                       or _graph_has_int8_custom_inputs(onnx_path))
+            if use_ort:
+                from ..config import debug_print
+                debug_print("[Engine] INT8 tensors or in-place buffers detected; executing the exact "
+                            "ONNX Runtime plugin (TensorRT's tensor path corrupts these patterns).")
+                return self._run_ort(inputs)
+            so_path = os.path.join(self.cache_dir, "trt_plugins", "libtriton_trt_plugins.so")
             engine_path = os.path.join(self.cache_dir, f"{self.model_name}.engine")
             
             import sys
@@ -301,20 +334,21 @@ class CompiledModel:
                     config.add_optimization_profile(profile)
 
                 # Set dynamic range ONLY for network inputs/outputs with DataType Int8
-                for i in range(network.num_inputs):
-                    t = network.get_input(i)
-                    if t.dtype == trt.DataType.INT8:
-                        try:
-                            t.set_dynamic_range(-128.0, 127.0)
-                        except Exception:
-                            pass
-                for i in range(network.num_outputs):
-                    t = network.get_output(i)
-                    if t.dtype == trt.DataType.INT8:
-                        try:
-                            t.set_dynamic_range(-128.0, 127.0)
-                        except Exception:
-                            pass
+                if not os.environ.get("KL_TRT_NO_DR"):
+                    for i in range(network.num_inputs):
+                        t = network.get_input(i)
+                        if t.dtype == trt.DataType.INT8:
+                            try:
+                                t.set_dynamic_range(-128.0, 127.0)
+                            except Exception:
+                                pass
+                    for i in range(network.num_outputs):
+                        t = network.get_output(i)
+                        if t.dtype == trt.DataType.INT8:
+                            try:
+                                t.set_dynamic_range(-128.0, 127.0)
+                            except Exception:
+                                pass
                 
                 serialized_engine = builder.build_serialized_network(network, config)
                 if serialized_engine is None:
@@ -328,9 +362,7 @@ class CompiledModel:
                 self._trt_engine = runtime.deserialize_cuda_engine(f.read())
                 
             self._trt_context = self._trt_engine.create_execution_context()
-            self._trt_stream = torch.cuda.Stream() # Résout les warnings TRT !
-            self._output_tensors = {} # Cache pour éviter cudaMalloc
-            self._last_input_ptrs = None
+            self._output_tensors = {}   # (name, shape, dtype) -> cached CUDA tensor
 
 
         trt_inputs = []
@@ -400,11 +432,21 @@ class CompiledModel:
                 else:
                     shape = tuple(raw_shape)
                 out_dtype = self.output_dtypes[out_idx] if (self.output_dtypes and out_idx < len(self.output_dtypes)) else torch.float32
-                out_t = torch.empty(shape, device='cuda', dtype=out_dtype)
+                key = (name, tuple(shape), out_dtype)
+                out_t = self._output_tensors.get(key)
+                if out_t is None:
+                    out_t = torch.empty(shape, device='cuda', dtype=out_dtype)
+                    self._output_tensors[key] = out_t
                 self._trt_context.set_tensor_address(name, out_t.data_ptr())
                 torch_outputs.append(out_t)
                 out_idx += 1
 
-        self._trt_context.execute_async_v3(stream_handle=self._trt_stream.cuda_stream)
-        torch.cuda.current_stream().wait_stream(self._trt_stream)
+        # Execute on the *current* torch stream so it is ordered after any
+        # producer ops (and after the cached-output allocation) with no race.
+        stream = torch.cuda.current_stream().cuda_stream
+        self._trt_context.execute_async_v3(stream_handle=stream)
+        # Guarantee completion before returning: the caller may free the input
+        # tensors immediately, and a raw async launch is not tracked by torch's
+        # caching allocator.
+        torch.cuda.current_stream().synchronize()
         return torch_outputs[0] if len(torch_outputs) == 1 else tuple(torch_outputs)

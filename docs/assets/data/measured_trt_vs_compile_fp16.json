@@ -1,0 +1,6 @@
+{
+  "eager": 8.896370849609376,
+  "torch.compile": 4.457607116699219,
+  "KernelLens ORT": 7.8046923828125,
+  "KernelLens TensorRT": 8.197089233398437
+}

@@ -121,5 +121,12 @@ def analyze_grid_asts(
             else:
                 arg.kind = 'scalar'
                 debug_print(f"[Auto] Mapped scalar constant: {arg.name} = {arg.value}")
-                
+
+        # A kernel with no stride arguments addresses a flat buffer, so it is
+        # agnostic to the physical layout and can accept channel-last formats.
+        manifest.layout_agnostic = not any(
+            'stride' in a.name.lower() for a in manifest.arguments
+        )
+        debug_print(f"[Layout] '{manifest.kernel_name}' layout_agnostic={manifest.layout_agnostic}")
+
     return manifests
