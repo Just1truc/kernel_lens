@@ -44,9 +44,9 @@ def _make_stream_reader(trt, path):
     _get_ptr.restype = ctypes.c_void_p
     _get_ptr.argtypes = [ctypes.py_object, ctypes.c_char_p]
 
-    _whence = {getattr(trt.SeekPosition, "kSET", 0): os.SEEK_SET,
-               getattr(trt.SeekPosition, "kCUR", 1): os.SEEK_CUR,
-               getattr(trt.SeekPosition, "kEND", 2): os.SEEK_END}
+    _whence = {trt.SeekPosition.SET: os.SEEK_SET,
+               trt.SeekPosition.CUR: os.SEEK_CUR,
+               trt.SeekPosition.END: os.SEEK_END}
 
     class _FileStreamReader(trt.IStreamReaderV2):
         def __init__(self):
