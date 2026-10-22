@@ -151,12 +151,21 @@ def main():
             with torch.no_grad():
                 got = cm.run((ids,), backend=b)
             g = got[0] if isinstance(got, (tuple, list)) else got
-            diff = float((g.float() - ref.float()).abs().max())
+            gf, rf = g.float(), ref.float()
+            # Max abs diff is a harsh metric on 50k-way logits; for a decoder
+            # what matters is whether the argmax (greedy token) is preserved.
+            top1 = float((gf.argmax(-1) == rf.argmax(-1)).float().mean())
+            res = {"max_abs_diff": float((gf - rf).abs().max()),
+                   "mean_abs_diff": float((gf - rf).abs().mean()),
+                   "top1_agreement": top1,
+                   "logit_scale": float(rf.abs().max())}
             with torch.no_grad():
                 ms = bench(lambda b=b: cm.run((ids,), backend=b), args.iters)
-            results[f"kernel_lens_{b}_ms"] = ms
-            results[f"kernel_lens_{b}_max_abs_diff"] = diff
-            print(f"KernelLens {b:<9}: {ms:.2f} ms   max|diff|={diff:.3e}")
+            res["ms"] = ms
+            results[f"kernel_lens_{b}"] = res
+            print(f"KernelLens {b:<9}: {ms:7.2f} ms  "
+                  f"top1={top1*100:.2f}%  mean|d|={res['mean_abs_diff']:.2e}  "
+                  f"max|d|={res['max_abs_diff']:.2e}")
     except Exception as e:
         import traceback
         traceback.print_exc()
