@@ -12,6 +12,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export PYTHONPATH="$ROOT"
 export KERNEL_LENS_CACHE_DIR="${KERNEL_LENS_CACHE_DIR:-$HOME/.kernel_lens_cache}"
+# CUDA toolkits before 12.9 reject GCC 13's exception specifiers; use a
+# compatible host compiler when one is installed.
+if [ -z "${KERNEL_LENS_CCBIN:-}" ] && [ -e /usr/bin/g++-12 ]; then
+  export KERNEL_LENS_CCBIN=g++-12
+fi
 OUT="${OUT:-$ROOT/results}"
 mkdir -p "$OUT"
 

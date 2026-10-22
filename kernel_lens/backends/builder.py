@@ -6,6 +6,20 @@ import shutil
 
 from ..utils.env_check import find_nvcc
 
+
+def _host_compiler():
+    """Host compiler for nvcc.
+
+    CUDA toolkits before 12.9 declare rsqrt/sinpi/... without noexcept, which
+    GCC 13 rejects ("has a different exception specifier"), so the right choice
+    is environment-specific. Override with KERNEL_LENS_CCBIN.
+    """
+    override = os.environ.get("KERNEL_LENS_CCBIN")
+    if override:
+        return override
+    return "g++-13" if os.path.exists("/usr/bin/g++-13") else "g++"
+
+
 def get_cuda_home() -> str:
     nvcc_path = find_nvcc()
     if nvcc_path:
@@ -152,7 +166,7 @@ def build_ort_plugin(ort_plugins_dir: str, cache_dir: str):
             arch_flag = "-gencode=arch=compute_75,code=sm_75"
 
         user_trt_inc = os.path.expanduser("~/tensorrt_headers")
-        cpp_compiler = "g++-13" if os.path.exists("/usr/bin/g++-13") else "g++"
+        cpp_compiler = _host_compiler()
         ccbin_flag = ["-ccbin", cpp_compiler] if os.path.exists(f"/usr/bin/{cpp_compiler}") else []
 
         cmd = [
@@ -318,7 +332,7 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
             and not os.path.exists(os.path.join(d, "crt", "math_functions.h"))
         ]
 
-        cpp_compiler = "g++-13" if os.path.exists("/usr/bin/g++-13") else "g++"
+        cpp_compiler = _host_compiler()
         ccbin_flag = ["-ccbin", cpp_compiler] if os.path.exists(f"/usr/bin/{cpp_compiler}") else []
 
         cmd = [
@@ -383,7 +397,7 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
                     nvinfer_link_flag = [os.path.join(d, f)]
                     break
 
-    cpp_compiler = "g++-13" if os.path.exists("/usr/bin/g++-13") else "g++"
+    cpp_compiler = _host_compiler()
     cmd = [
         cpp_compiler, "-shared", "-o", so_path
     ] + obj_files + [

@@ -37,6 +37,20 @@ print('   cuda headers:', 'found' if any(os.path.exists(os.path.join(d,'..','inc
 # --- python dependencies ---------------------------------------------------
 # TensorRT is pinned below 11: the plugin generator emits the
 # IPluginV2DynamicExt interface that 10.x uses, and the package refuses 11+.
+echo "== host compiler =="
+# CUDA toolkits before 12.9 declare rsqrt/sinpi without noexcept, which GCC 13
+# rejects. Prefer g++-12 where it is installable.
+if [ ! -e /usr/bin/g++-12 ] && [ "$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1; then
+  apt-get update -qq >/dev/null 2>&1 || true
+  apt-get install -y -qq g++-12 >/dev/null 2>&1 || true
+fi
+if [ -e /usr/bin/g++-12 ]; then
+  export KERNEL_LENS_CCBIN=g++-12
+  echo "   host compiler: g++-12 (set KERNEL_LENS_CCBIN=g++-12 when running)"
+else
+  echo "   host compiler: nvcc default"
+fi
+
 echo "== python deps =="
 python3 -m pip install --quiet --upgrade pip
 python3 -m pip install --quiet onnx onnxruntime-gpu "tensorrt>=10,<11" pytest
