@@ -53,11 +53,14 @@ def _make_stream_reader(trt, path):
             super().__init__()
             self._f = open(path, "rb")
 
-        def read(self, destination, num_bytes, stream):
+        def read(self, num_bytes, destination):
+            # The binding dispatches (num_bytes, destination_pointer) — the
+            # reverse of the order in the published docstring, which is itself
+            # swapped with seek's. Verified empirically against TensorRT 10.16.
             data = self._f.read(int(num_bytes))
             if not data:
                 return 0
-            ctypes.memmove(_get_ptr(destination, None), data, len(data))
+            ctypes.memmove(int(destination), data, len(data))
             return len(data)
 
         def seek(self, offset, where):
@@ -68,9 +71,17 @@ def _make_stream_reader(trt, path):
 
 
 def _deserialize_engine(trt, runtime, engine_path):
-    if os.path.getsize(engine_path) > (1 << 31) and hasattr(trt, "IStreamReaderV2"):
+    # The stream-reader path is experimental: TensorRT's Python binding
+    # dispatches read(num_bytes, destination) — the reverse of its documented
+    # order — and writing through that pointer is not yet reliable. Engines
+    # below 2 GB take the memory path regardless; above it, opt in explicitly.
+    if (os.environ.get("KERNEL_LENS_STREAM_READER") == "1"
+            and os.path.getsize(engine_path) > (1 << 31)
+            and hasattr(trt, "IStreamReaderV2")):
         try:
-            return runtime.deserialize_cuda_engine(_make_stream_reader(trt, engine_path))
+            eng = runtime.deserialize_cuda_engine(_make_stream_reader(trt, engine_path))
+            if eng is not None:
+                return eng
         except Exception:
             pass
     with open(engine_path, "rb") as f:
