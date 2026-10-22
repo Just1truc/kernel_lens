@@ -671,6 +671,21 @@ smaller but the maximum is larger, and top-1 agreement falls to $95.70\%$ on
 OPT-125M under TensorRT. Both precisions are reported rather than the more
 flattering one alone.
 
+OPT-350M is a useful control in this set: its ONNX Runtime result is
+bit-exact against eager --- $100\%$ top-1 agreement and zero absolute
+difference over all logits --- while TensorRT is $1.64\times$ faster
+($5.46$\,ms against $8.97$\,ms).
+
+\paragraph{Engine size.}
+TensorRT deserialization fails on the A100 host used here for engines above
+roughly $1$\,GB. The runtime reads the entire blob successfully (it logs
+``Loaded engine size: 2710 MiB'') and then aborts with a CUDA runtime error; in
+three of four attempts the host itself panicked. Engines of $315$\,MB and
+$704$\,MB deserialize normally, so the boundary is between those and
+$2{,}710$\,MB rather than the $2$\,GB protobuf limit it initially resembled.
+All Blackwell results are unaffected. We therefore report TensorRT only where
+its engine fits, and the ONNX Runtime lane carries the larger checkpoints.
+
 \section{Discussion}
 
 \paragraph{When the engine wins, and when it does not.} TensorRT is not

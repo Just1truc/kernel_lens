@@ -1,0 +1,22 @@
+{
+  "model": "facebook/opt-350m",
+  "params_B": 0.331147264,
+  "triton_modules": 48,
+  "dtype": "float16",
+  "seq": 512,
+  "eager_ms": 8.96961148828268,
+  "kernel_lens_onnx": {
+    "max_abs_diff": 0.0,
+    "mean_abs_diff": 0.0,
+    "top1_agreement": 1.0,
+    "logit_scale": 19.546875,
+    "ms": 21.726333629339933
+  },
+  "kernel_lens_tensorrt": {
+    "max_abs_diff": 0.54296875,
+    "mean_abs_diff": 0.04978521168231964,
+    "top1_agreement": 0.966796875,
+    "logit_scale": 19.546875,
+    "ms": 5.464558210223913
+  }
+}
