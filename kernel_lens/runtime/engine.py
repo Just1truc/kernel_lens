@@ -31,6 +31,52 @@ def _graph_has_int8_custom_inputs(onnx_path: str) -> bool:
         return False
     return False
 
+def _make_stream_reader(trt, path):
+    """File-backed ``IStreamReaderV2``.
+
+    Engines above roughly 2 GB fail to deserialize from a memory buffer; the
+    stream-reader path reads them straight from disk instead. TensorRT fills a
+    caller-provided capsule, so the bytes have to be memmove'd into it.
+    """
+    import ctypes
+
+    _get_ptr = ctypes.pythonapi.PyCapsule_GetPointer
+    _get_ptr.restype = ctypes.c_void_p
+    _get_ptr.argtypes = [ctypes.py_object, ctypes.c_char_p]
+
+    _whence = {getattr(trt.SeekPosition, "kSET", 0): os.SEEK_SET,
+               getattr(trt.SeekPosition, "kCUR", 1): os.SEEK_CUR,
+               getattr(trt.SeekPosition, "kEND", 2): os.SEEK_END}
+
+    class _FileStreamReader(trt.IStreamReaderV2):
+        def __init__(self):
+            super().__init__()
+            self._f = open(path, "rb")
+
+        def read(self, destination, num_bytes, stream):
+            data = self._f.read(int(num_bytes))
+            if not data:
+                return 0
+            ctypes.memmove(_get_ptr(destination, None), data, len(data))
+            return len(data)
+
+        def seek(self, offset, where):
+            self._f.seek(int(offset), _whence.get(where, os.SEEK_SET))
+            return True
+
+    return _FileStreamReader()
+
+
+def _deserialize_engine(trt, runtime, engine_path):
+    if os.path.getsize(engine_path) > (1 << 31) and hasattr(trt, "IStreamReaderV2"):
+        try:
+            return runtime.deserialize_cuda_engine(_make_stream_reader(trt, engine_path))
+        except Exception:
+            pass
+    with open(engine_path, "rb") as f:
+        return runtime.deserialize_cuda_engine(f.read())
+
+
 class CompiledModel:
     def __init__(self, cache_dir: str, model_name: str, backends: list[str], output_shapes: list = None, output_strides: list = None, output_dtypes: list = None, saved_args: list = None):
         """
@@ -306,16 +352,46 @@ class CompiledModel:
                 else:
                     network = builder.create_network()
                 parser = trt.OnnxParser(network, TRT_LOGGER)
-                
-                with open(onnx_path, 'rb') as model:
-                    if not parser.parse(model.read()):
-                        for error in range(parser.num_errors):
-                            print(parser.get_error(error))
-                        raise RuntimeError("Failed to parse ONNX graph for TensorRT.")
+
+                # Parse from the file path rather than a bytes buffer. Graphs
+                # above the 2 GB protobuf limit spill their weights to external
+                # files beside the model, and the parser can only resolve those
+                # relative locations when it knows which directory that is.
+                if hasattr(parser, "parse_from_file"):
+                    ok = parser.parse_from_file(onnx_path)
+                else:
+                    with open(onnx_path, 'rb') as model:
+                        ok = parser.parse(model.read())
+                if not ok:
+                    for error in range(parser.num_errors):
+                        print(parser.get_error(error))
+                    raise RuntimeError("Failed to parse ONNX graph for TensorRT.")
                         
                 config = builder.create_builder_config()
                 if hasattr(config, "set_memory_pool_limit"):
                     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30)
+
+                # TensorRT keeps plugin layers in FP32 unless the matching
+                # precision flag is enabled. Without it the builder inserts a
+                # cast on the plugin's inputs, and the plugin's dtype guard
+                # (which mirrors the kernel's signature) then rejects them, so
+                # the engine build fails with "could not find any supported
+                # formats consistent with input/output data types".
+                try:
+                    import onnx as _onnx
+                    _g = _onnx.load(onnx_path, load_external_data=False).graph
+                    # TensorProto: 10 = FLOAT16, 16 = BFLOAT16. An LLM's graph
+                    # *inputs* are token ids (int64), so the precision has to be
+                    # read from the initializers and the internal tensors too.
+                    _elem = {t.type.tensor_type.elem_type
+                             for t in list(_g.input) + list(_g.output) + list(_g.value_info)}
+                    _elem |= {t.data_type for t in _g.initializer}
+                    if 10 in _elem and hasattr(trt.BuilderFlag, "FP16"):
+                        config.set_flag(trt.BuilderFlag.FP16)
+                    if 16 in _elem and hasattr(trt.BuilderFlag, "BF16"):
+                        config.set_flag(trt.BuilderFlag.BF16)
+                except Exception:
+                    pass
                 
                 profile = builder.create_optimization_profile()
                 has_dynamic = False
@@ -358,8 +434,8 @@ class CompiledModel:
             # ---------------------------------------------------
             
             # On lit le SSD et on désérialise UNE SEULE FOIS
-            with open(engine_path, "rb") as f, trt.Runtime(TRT_LOGGER) as runtime:
-                self._trt_engine = runtime.deserialize_cuda_engine(f.read())
+            with trt.Runtime(TRT_LOGGER) as runtime:
+                self._trt_engine = _deserialize_engine(trt, runtime, engine_path)
                 
             self._trt_context = self._trt_engine.create_execution_context()
             self._output_tensors = {}   # (name, shape, dtype) -> cached CUDA tensor

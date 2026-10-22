@@ -7,7 +7,7 @@ from .config import set_verbose, is_verbose
 
 
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 __all__ = [
     "compile",
