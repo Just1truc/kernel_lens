@@ -1,0 +1,15 @@
+{
+  "model": "facebook/opt-125m",
+  "params_B": 0.125220096,
+  "triton_modules": 25,
+  "dtype": "float16",
+  "seq": 512,
+  "eager_ms": 4.92511410266161,
+  "kernel_lens_onnx": {
+    "max_abs_diff": 0.1796875,
+    "mean_abs_diff": 0.0010388370137661695,
+    "top1_agreement": 0.998046875,
+    "logit_scale": 20.9375,
+    "ms": 8.800656348466873
+  }
+}

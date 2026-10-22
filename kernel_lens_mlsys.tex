@@ -632,38 +632,44 @@ exporter rather than of the recovered contract, since plain
 \begin{table*}[t]
 \centering
 \footnotesize
-\begin{tabular}{lrrrr}
+\begin{tabular}{lrrrrr}
 \toprule
-Model & Triton & Eager & \multicolumn{2}{c}{KernelLens} \\
-\cmidrule(lr){4-5}
- & kernels & & ORT & TensorRT \\
+ & Triton & \multicolumn{2}{c}{fp32} & \multicolumn{2}{c}{fp16} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+Model & kernels & Eager & KernelLens & Eager & KernelLens \\
 \midrule
-OPT-125M & 25 & 11.97\,ms & 9.15\,ms ($1.31\times$) & 3.65\,ms ($3.28\times$) \\
-OPT-1.3B & 49 & 14.20\,ms & 21.80\,ms ($0.65\times$) & -- \\
-OPT-2.7B & 65 & 20.97\,ms & 33.81\,ms ($0.62\times$) & -- \\
+OPT-125M & 25 & 11.97\,ms & 9.15\,ms ($1.31\times$) & 4.93\,ms & 8.80\,ms ($0.56\times$) \\
+OPT-1.3B & 49 & 87.55\,ms & 32.03\,ms ($2.73\times$) & 13.86\,ms & 21.80\,ms ($0.65\times$) \\
+OPT-2.7B & 65 & 175.37\,ms & 49.35\,ms ($3.55\times$) & 20.97\,ms & 33.81\,ms ($0.62\times$) \\
 \bottomrule
 \end{tabular}
 \caption{Real pretrained OPT checkpoints with every decoder
 \texttt{LayerNorm} replaced by the Triton RMSNorm kernel. Prefill latency,
-$S{=}512$; fp16 except OPT-125M (fp32). Parenthesised figures are relative to
-eager.}
+$S{=}512$; KernelLens numbers are the ONNX Runtime lane. Parenthesised figures
+are relative to eager.}
 \label{tab:real}
 \end{table*}
 
-On OPT-125M the compiled model is $3.28\times$ faster than eager under
-TensorRT and $1.31\times$ under ONNX Runtime. On the larger checkpoints the ONNX
-Runtime lane is \emph{slower} than eager: the runtime's per-node host overhead
-dominates once the normalisation kernels are small relative to the surrounding
-GEMMs. That is the same architecture- and workload-dependence observed in the
-folding experiment, at larger scale, and it is the reason we do not claim a
-uniform speedup.
+In fp32 the compiled model is faster than eager at every size, and the margin
+\emph{grows} with the model: $1.31\times$, $2.73\times$ and $3.55\times$ for
+125M, 1.3B and 2.7B. The advantage comes from the engine's graph optimisation
+around the plugin rather than from the normalisation kernel itself, so it is
+largest where the surrounding operators dominate. In fp16 the ordering reverses
+and the runtime is consistently $1.5$--$1.8\times$ slower than eager,
+independently of size: the compiled fp16 graph for OPT-125M contains $1{,}583$
+nodes ($76$ \texttt{Cast}, $345$ \texttt{Unsqueeze}, $549$ \texttt{Constant})
+against only $25$ custom operators, so per-node dispatch overhead dominates at
+these shapes. TensorRT, which fuses rather than dispatching node-by-node, is
+instead $2.29\times$ faster than eager on the same fp16 model. The value of
+keeping kernels is thus engine- and precision-dependent, not size-dependent.
 
-Numerically, OPT-1.3B reproduces the eager reference exactly (zero absolute
-difference over all logits). On OPT-2.7B, where the engine is free to
-reassociate fp16 GEMMs, the mean absolute logit difference is
-$1.3\times10^{-2}$, the maximum is $2.24$ against a logit scale of $16.3$, and
-$98.05\%$ of positions retain the same argmax -- that is, the greedy
-continuation is unchanged for all but $2\%$ of tokens.
+Numerical agreement tracks precision. In fp32 the maximum absolute logit
+difference is $1.98\times10^{-2}$ on OPT-1.3B and $1.63\times10^{-1}$ on
+OPT-2.7B, against logit scales of $13.5$ and $16.0$, with $99.80\%$ and
+$98.83\%$ of positions retaining the same argmax. In fp16 the mean error is
+smaller but the maximum is larger, and top-1 agreement falls to $95.70\%$ on
+OPT-125M under TensorRT. Both precisions are reported rather than the more
+flattering one alone.
 
 \section{Discussion}
 

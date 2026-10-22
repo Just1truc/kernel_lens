@@ -1,0 +1,9 @@
+{
+  "model": "facebook/opt-1.3b",
+  "params_B": 1.315657728,
+  "triton_modules": 49,
+  "dtype": "float16",
+  "seq": 512,
+  "eager_ms": 13.860221486538649,
+  "kernel_lens_error": "AttributeError: 'NoneType' object has no attribute 'create_execution_context'"
+}
