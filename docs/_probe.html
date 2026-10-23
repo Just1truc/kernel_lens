@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KernelLens — Triton kernels, shipped as C++</title>
+<meta name="description" content="KernelLens compiles PyTorch Triton kernels into native ONNX Runtime and TensorRT C++ plugins, folding the standard layers and keeping your kernels, with zero-copy VRAM binding.">
+<link rel="icon" href="assets/logo.png">
+<link rel="apple-touch-icon" href="assets/logo.png">
+<meta property="og:title" content="KernelLens — Triton kernels, shipped as C++">
+<meta property="og:description" content="Compile PyTorch Triton kernels into native ONNX Runtime and TensorRT C++ plugins.">
+<meta property="og:image" content="assets/figures/architectural_diagram.png">
+<meta name="theme-color" content="#c06048">
+<meta name="color-scheme" content="light dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" media="(prefers-color-scheme: light)">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+</head>
+<body>
+<div id="progress"></div>
+<div id="glow"></div>
+<div id="tip" role="status"></div>
+
+<nav>
+  <div class="wrap inner">
+    <a class="brand" href="#top"><img src="assets/logo.png" alt="">KernelLens</a>
+    <div class="links">
+      <a href="#problem">problem</a>
+      <a href="#pipeline">pipeline</a>
+      <a href="#code">code</a>
+      <a href="#results">results</a>
+      <a href="#why">why</a>
+      <a href="#install">install</a>
+      <a href="#status">status</a>
+      <a href="#faq">faq</a>
+      <a href="kernel_lens_paper.pdf">paper</a>
+      <a href="https://github.com/Just1truc/kernel_lens">github</a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <header class="hero" id="top">
+    <div>
+      <span class="kicker"><i></i>v1.1.9 · research release</span>
+      <h1>Write Triton,<br>Ship <em>C++</em></h1>
+      <p class="lede">KernelLens compiles a PyTorch module with custom <code>@triton.jit</code> kernels into native ONNX Runtime and TensorRT C++ plugins. The engine <em>folds</em> your standard layers; your kernels stay kernels for the operations folding cannot express.</p>
+      <div class="cta">
+        <a class="btn solid" href="#results">See the results</a>
+        <a class="btn" href="kernel_lens_paper.pdf">Read the paper</a>
+        <a class="btn" href="https://github.com/Just1truc/kernel_lens">Source</a>
+        <a class="btn" href="https://pypi.org/project/kernel-lens/">pip install kernel-lens</a>
+      </div>
+      <div class="pills">
+        <span class="pill">python ≥ 3.10</span>
+        <span class="pill">cuda ≥ 12.0</span>
+        <span class="pill">ONNX Runtime · TensorRT 10.x</span>
+        <span class="pill">MIT</span>
+      </div>
+    </div>
+    <div class="stage-wrap">
+      <svg id="stage" viewBox="0 0 520 360" role="img" aria-label="The KernelLens compile and run pipeline. Hover a stage.">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" style="fill:var(--line)"/>
+          </marker>
+        </defs>
+        <g class="node" tabindex="0" data-t="Trace"
+           data-d="The model runs on the GPU once while Triton's launcher is patched, capturing the compiled PTX, shared memory, warps, the real grid and every argument's shape and strides. A symbolic pass recovers the grid expression; a static AST scan classifies each argument as input, output or in-place.">
+          <rect x="16" y="8" width="488" height="70" rx="12" style="fill:var(--card);stroke:var(--line)"/>
+          <rect x="16" y="8" width="6" height="70" rx="3" style="fill:var(--brand)"/>
+          <text class="t" x="38" y="36">1 · Trace</text>
+          <text class="s" x="38" y="58">PTX · shared memory · dynamic grid · arg taxonomy</text>
+        </g>
+        <line x1="260" y1="78" x2="260" y2="94" style="stroke:var(--line)" stroke-width="2" marker-end="url(#ah)"/>
+        <g class="node" tabindex="0" data-t="Rewrite the graph"
+           data-d="torch.onnx.export runs with Triton calls replaced by triton_custom nodes carrying the PTX and the argument taxonomy. Per-call scalars become CPU inputs; in-place buffers are wired input-to-output so the optimiser sees the mutation.">
+          <rect x="16" y="96" width="488" height="70" rx="12" style="fill:var(--card);stroke:var(--line)"/>
+          <rect x="16" y="96" width="6" height="70" rx="3" style="fill:var(--brand-2, var(--brand))"/>
+          <text class="t" x="38" y="124">2 · Rewrite the graph</text>
+          <text class="s" x="38" y="146">triton_custom nodes · CPU scalars · in-place aliasing</text>
+        </g>
+        <line x1="260" y1="166" x2="260" y2="182" style="stroke:var(--line)" stroke-width="2" marker-end="url(#ah)"/>
+        <g class="node" tabindex="0" data-t="Synthesize the plugins"
+           data-d="KernelLens emits an OrtCustomOp class and a nvinfer1::IPluginV2DynamicExt + IPluginCreator, rebuilds the PTX entry-slot argument array, and evaluates the launch grid in C++ over the runtime dimensions.">
+          <rect x="16" y="184" width="488" height="70" rx="12" style="fill:var(--card);stroke:var(--line)"/>
+          <rect x="16" y="184" width="6" height="70" rx="3" style="fill:var(--brand)"/>
+          <text class="t" x="38" y="212">3 · Synthesize the plugins</text>
+          <text class="s" x="38" y="234">OrtCustomOp · IPluginV2DynamicExt · PTX ABI · grid</text>
+        </g>
+        <line x1="260" y1="254" x2="260" y2="270" style="stroke:var(--line)" stroke-width="2" marker-end="url(#ah)"/>
+        <g class="node" tabindex="0" data-t="Build and run"
+           data-d="nvcc and g++ produce the shared libraries; the TensorRT engine is built once and cached. At run time, PyTorch's data_ptr() addresses are handed straight to the engine — IOBinding for ONNX Runtime, set_tensor_address for TensorRT — with no host staging copies.">
+          <rect x="16" y="272" width="488" height="70" rx="12" style="fill:var(--card);stroke:var(--line)"/>
+          <rect x="16" y="272" width="6" height="70" rx="3" style="fill:var(--brand-2, var(--brand))"/>
+          <text class="t" x="38" y="300">4 · Build &amp; run</text>
+          <text class="s" x="38" y="322">nvcc / g++ → .so · zero-copy binding</text>
+        </g>
+      </svg>
+      <div id="stage-tip"><b>One compile call, one run call per backend.</b> Hover a stage.</div>
+    </div>
+  </header>
+
+  <section id="overview" style="--dot: var(--s1)">
+    <span class="tag">What it is</span>
+    <h2>One call, two artifacts, two engines.</h2>
+    <div class="grid3">
+      <div class="col rv" style="--dot: var(--s1)">
+        <h3>Compile</h3>
+        <p><code>kl.compile(model, sample_input)</code> traces the module, rewrites it into an ONNX graph with injected custom nodes, synthesizes the C++ plugin classes and builds the shared libraries. You keep writing Triton in Python.</p>
+      </div>
+      <div class="col rv" style="--dot: var(--s3)">
+        <h3>Run</h3>
+        <p><code>compiled_model.run(inputs, backend="tensorrt")</code> executes in the engine with zero-copy VRAM binding — PyTorch's <code>data_ptr()</code> handed straight to the engine, no host staging.</p>
+      </div>
+      <div class="col rv" style="--dot: var(--s5)">
+        <h3>Fold + keep</h3>
+        <p>The engine folds your standard layers; your kernels run as native plugins for the operations folding cannot express. You get both in one C++ graph.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="problem" style="--dot: var(--s2)">
+    <span class="tag" style="--dot: var(--s2)">The problem</span>
+    <h2>Production runs in C++. Your Triton kernels do not.</h2>
+    <p>Enterprise inference is served by pure C++ engines — ONNX Runtime and TensorRT — for latency, concurrency and whole-graph optimisation. But <code>torch.onnx.export</code> traces TorchScript or TorchDynamo IR that represents native PyTorch operators; an imperative Python call to a <code>triton.JITFunction</code> is opaque to it. The kernel is dropped or the export fails.</p>
+    <p>Doing it by hand means re-implementing the kernel in CUDA, writing the ONNX and TensorRT plugin classes, patching the PyTorch graph, and building and loading the result. A Triton kernel is not one operator — it presents five properties a C++ engine must recover.</p>
+    <div class="gaps">
+      <div class="gap" style="--dot:var(--s1)"><h4>PTX entry ABI</h4><p>Triton's PTX re-orders, drops and re-bitwidths parameters; the host must rebuild the exact slot layout.</p></div>
+      <div class="gap" style="--dot:var(--s2)"><h4>Dynamic launch grid</h4><p>The grid is a Python expression over runtime shapes, e.g. <code>(s0*s1+127)//128</code>; it cannot be frozen at compile time.</p></div>
+      <div class="gap" style="--dot:var(--s3)"><h4>Nested &amp; in-place code</h4><p>Stores delegated to helpers and buffers mutated in place produce spurious copies or corrupted graphs.</p></div>
+      <div class="gap" style="--dot:var(--s4)"><h4>Dynamic host scalars</h4><p>Per-call values (a soft-cap &tau;, a scale &alpha;) must be accepted without recompiling the engine.</p></div>
+      <div class="gap" style="--dot:var(--s5)"><h4>Quantized layout</h4><p>FP8 and sub-byte INT4 need 1-byte pointer mapping and dtype-accurate memory placement.</p></div>
+    </div>
+  </section>
+
+  <section id="pipeline" style="--dot: var(--s3)">
+    <span class="tag" style="--dot: var(--s3)">How it works</span>
+    <h2>What you would build by hand — and what KernelLens does instead.</h2>
+    <p>To put one Triton kernel into either engine manually, you port it to CUDA, implement the ONNX classes (<code>Ort::CustomOp</code>, <code>Ort::CustomOpApi</code>, domain registration), implement the TensorRT classes (<code>nvinfer1::IPluginV2DynamicExt</code>, <code>nvinfer1::IPluginCreator</code>), write a CMake build, patch the FX graph with a C++ extension and <code>@torch.library.custom_op</code>, export, build the engine, and then drive each engine yourself — creating the session, binding raw CUDA pointers, creating the execution context, calling <code>setTensorAddress</code> and enqueueing.</p>
+    <figure class="shot rv">
+      <picture>
+        <source srcset="assets/figures/architectural_diagram_dark.png" media="(prefers-color-scheme: dark)">
+        <img src="assets/figures/architectural_diagram.png" alt="Manual pipeline versus KernelLens">
+      </picture>
+      <figcaption>Top: every box is a class, a build step or an engine call you write and maintain by hand — CUDA porting, <code>Ort::CustomOp</code>, <code>IPluginV2DynamicExt</code>, CMake, FX-graph patching, export, engine build, <code>RunWithBindings</code> and <code>Enqueue Execution</code>. Bottom: KernelLens is the three calls.</figcaption>
+    </figure>
+
+    <h3 style="margin-top:38px">The compile pipeline</h3>
+    <p><code>kl.compile(model, sample_input, backends=[...])</code> produces a validated manifest, an ONNX graph and the plugin libraries. Each arrow below is a concrete artifact.</p>
+    <figure class="shot rv">
+      <picture>
+        <source srcset="assets/figures/pipeline_end_to_end_dark.png" media="(prefers-color-scheme: dark)">
+        <img src="assets/figures/pipeline_end_to_end.png" alt="The KernelLens compile pipeline">
+      </picture>
+      <figcaption>Trace → rewrite the graph → synthesize the plugins → build. The TensorRT engine is built lazily on the first run and cached.</figcaption>
+    </figure>
+    <div class="grid2 cmp">
+      <div class="rv">
+        <span class="tag" style="--dot: var(--s1)">Trace</span>
+        <h3 style="margin-top:10px">Recover what the kernel really is</h3>
+        <ul>
+          <li>An <b>eager pass</b> intercepts the compiled PTX, shared memory, warps, the real grid and every argument's shape and strides.</li>
+          <li>A <b>symbolic pass</b> recovers the launch grid as an expression over runtime shapes.</li>
+          <li>A <b>static AST scan</b> of <code>tl.load</code>/<code>tl.store</code> classifies each argument as input, output or in-place.</li>
+        </ul>
+      </div>
+      <div class="rv">
+        <span class="tag" style="--dot: var(--s2)">Rewrite</span>
+        <h3 style="margin-top:10px">Inject custom nodes</h3>
+        <ul>
+          <li>Inside <code>torch.onnx.export</code>, Triton calls become <code>triton_custom::&lt;kernel&gt;</code> nodes carrying the PTX.</li>
+          <li>Per-call scalars become CPU inputs, so a new value needs no recompilation.</li>
+          <li>In-place buffers are wired input-to-output so the optimiser sees the mutation.</li>
+        </ul>
+      </div>
+      <div class="rv">
+        <span class="tag" style="--dot: var(--s3)">Synthesize</span>
+        <h3 style="margin-top:10px">Generate the C++ classes</h3>
+        <ul>
+          <li>An <code>OrtCustomOp</code> class for ONNX Runtime.</li>
+          <li>An <code>IPluginV2DynamicExt</code> + <code>IPluginCreator</code> for TensorRT.</li>
+          <li>The PTX entry-slot argument array is rebuilt and the grid is evaluated in C++.</li>
+        </ul>
+      </div>
+      <div class="rv">
+        <span class="tag" style="--dot: var(--s4)">Build</span>
+        <h3 style="margin-top:10px">Compile and harden</h3>
+        <ul>
+          <li><code>nvcc</code> + <code>g++</code> produce the shared libraries.</li>
+          <li>PTX ISA versions are clamped for older driver JITs; conda CUDA header layouts are resolved.</li>
+          <li>A 16-byte alignment guard stages sub-aligned tensor slices through an aligned buffer.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 style="margin-top:38px">The run pipeline</h3>
+    <p>At run time, PyTorch's GPU addresses are handed straight to the engine.</p>
+    <figure class="shot rv">
+      <picture>
+        <source srcset="assets/figures/run_pipeline_dark.png" media="(prefers-color-scheme: dark)">
+        <img src="assets/figures/run_pipeline.png" alt="The KernelLens run pipeline for ONNX Runtime and TensorRT">
+      </picture>
+      <figcaption>One run call dispatches to either lane. ONNX Runtime: create the session, bind raw CUDA pointers, <code>RunWithBindings</code>. TensorRT: deserialize into an execution context, <code>setTensorAddress</code>, enqueue. No host staging copies.</figcaption>
+    </figure>
+    <pre><code class="language-python">import torch, triton, triton.language as tl
+import kernel_lens as kl
+
+class RMSNorm(torch.nn.Module):
+    def forward(self, x):
+        B, M, N = x.shape
+        out = torch.empty_like(x)
+        rmsnorm_kernel[(B, M)](x, self.weight, out, x.stride(0), x.stride(1),
+                               out.stride(0), out.stride(1),
+                               N=N, eps=1e-6, BLOCK_SIZE=triton.next_power_of_2(N))
+        return out
+
+x = torch.randn(4, 512, 4096, device="cuda")
+compiled = kl.compile(RMSNorm().cuda(), (x,), name="llama3_rmsnorm",
+                      backends=["onnx", "tensorrt"])   # compile once
+
+out_ort = compiled.run((x,), backend="onnx")            # run in ONNX Runtime
+out_trt = compiled.run((x,), backend="tensorrt")        # run in TensorRT</code></pre>
+  </section>
+
+  <section id="code" style="--dot: var(--s2)">
+    <span class="tag" style="--dot: var(--s2)">The code you don't write</span>
+    <h2>Nine lines of Python, or eleven hundred lines of C++.</h2>
+    <p>The same thing — one Triton kernel running as a native operator in ONNX Runtime and TensorRT — from either side. On the left is everything the user writes. On the right is what KernelLens generates, and what you would otherwise write and maintain by hand.</p>
+    <div class="grid2 cmp">
+      <div class="rv">
+        <span class="tag" style="--dot: var(--s3)">With KernelLens — Python</span>
+        <pre><code class="language-python">import kernel_lens as kl
+
+# the Triton kernel + module you already wrote
+compiled = kl.compile(
+    RMSNorm(4096).cuda(), (x,),
+    name="llama3_rmsnorm",
+    backends=["onnx", "tensorrt"],
+)
+
+out_ort = compiled.run((x,), backend="onnx")
+out_trt = compiled.run((x,), backend="tensorrt")</code></pre>
+        <p class="note">That is the whole deployment. No C++, no CMake, no graph patching.</p>
+      </div>
+      <div class="rv">
+        <span class="tag" style="--dot: var(--s1)">Without — C++ you write by hand</span>
+        <pre><code class="language-cpp">// 1. port the kernel to CUDA  (rmsnorm.cu)
+// 2. OrtCustomOp for ONNX Runtime
+struct RmsnormOp : Ort::CustomOpBase&lt;...&gt; {
+  const char* GetName() const { return "rmsnorm"; }
+  ONNXTensorElementDataType GetInputType(size_t i) const;
+  // ... + a Compute() that rebuilds the PTX argument array
+};
+// 3. TensorRT plugin
+class RmsnormPlugin : public nvinfer1::IPluginV2DynamicExt {
+  DimsExprs getOutputDimensions(...) noexcept override;
+  bool supportsFormatCombination(...) noexcept override;
+  int32_t enqueue(...) noexcept override;      // launch
+  size_t getSerializationSize() const noexcept override;
+  void serialize(void*) const noexcept override;
+  IPluginV2DynamicExt* clone() const noexcept override;
+};
+class RmsnormPluginCreator : public nvinfer1::IPluginCreator { /* ... */ };
+// 4. CMakeLists.txt + nvcc + g++
+// 5. a PyTorch C++ extension that patches the FX graph
+// 6. drive the engines: Ort::Session + RunWithBindings,
+//    IExecutionContext + setTensorAddress + enqueue</code></pre>
+        <p class="note">≈ <b>1,329 lines</b> of generated C++ across 6 files for this one kernel — before CMake, the FX-graph patch, or the engine-driving code.</p>
+      </div>
+    </div>
+    <div class="viz">
+    <div class="vizh"><span><b>1,137 lines of C++</b> &middot; what a hand-written plugin takes</span><span><span style="color:var(--c-kl)">■ ONNX Runtime</span> &nbsp; <span style="color:var(--c-trt)">■ TensorRT</span></span></div>
+    <div class="vrow"><div class="vlab">ort_plugins/…Op.cu<small>generated C++</small></div><div class="vtrack">
+    <div class="vbar" style="width:100.0%;--c:var(--c-kl)"></div>
+    </div><div class="vval">686</div></div>
+    <div class="vrow"><div class="vlab">trt_plugins/…Plugin.cu</div><div class="vtrack">
+    <div class="vbar" style="width:33.5%;--c:var(--c-trt)"></div>
+    </div><div class="vval">230</div></div>
+    <div class="vrow"><div class="vlab">trt_plugins/…Plugin.h</div><div class="vtrack">
+    <div class="vbar" style="width:16.5%;--c:var(--c-trt)"></div>
+    </div><div class="vval">113</div></div>
+    <div class="vrow"><div class="vlab">ort_plugins/…Op.h</div><div class="vtrack">
+    <div class="vbar" style="width:8.7%;--c:var(--c-kl)"></div>
+    </div><div class="vval">60</div></div>
+    <div class="vrow"><div class="vlab">ort_plugins/register_ops.cpp</div><div class="vtrack">
+    <div class="vbar" style="width:3.6%;--c:var(--c-kl)"></div>
+    </div><div class="vval">25</div></div>
+    <div class="vrow"><div class="vlab">trt_plugins/register_plugins.cpp</div><div class="vtrack">
+    <div class="vbar" style="width:3.4%;--c:var(--c-trt)"></div>
+    </div><div class="vval">23</div></div>
+    <div class="vnote">KernelLens writes all of it. The user writes <b>nine lines of Python</b>. Measured with <code>tests/measure_codegen.py</code> on one fused RMSNorm kernel built for both backends.</div>
+    </div>
+    <p class="note">Measured with <code>tests/measure_codegen.py</code> on a single fused RMSNorm kernel compiled for both backends.</p>
+  </section>
+
+  <section id="results" style="--dot: var(--s4)">
+    <span class="tag" style="--dot: var(--s4)">Results</span>
+    <h2>Fold the standard layers. Keep the kernels.</h2>
+    <p>The headline: a block whose attention is a custom squared-ReLU flash kernel, whose normalisations and gated activation are custom kernels, and whose projections and residuals are standard operators. Measured on an RTX 5060 Ti (Blackwell, <code>sm_120a</code>).</p>
+    <div class="stats">
+      <div class="stat rv" style="--dot: var(--s4)"><div class="num"><span data-count="1.99" data-dec="2">0</span>×</div><p>faster than the folded-only <code>torch.compile</code> formulation, which must materialise the O(N²) attention</p></div>
+      <div class="stat rv" style="--dot: var(--s3)"><div class="num"><span data-count="1.08" data-dec="2">0</span>×</div><p>faster than the unfused Triton-kernel path, because the engine folds the standard layers around the kernel</p></div>
+      <div class="stat rv" style="--dot: var(--s1)"><div class="num">0.00e+00</div><p>max difference vs native Triton for the research kernels inside ONNX Runtime</p></div>
+      <div class="stat rv" style="--dot: var(--s2)"><div class="num">464 MB</div><p>peak VRAM in a 4-layer LLaMA decoder, versus 478 MB eager and 473 MB <code>torch.compile</code></p></div>
+    </div>
+
+    <h3 style="margin-top:38px">Folding + kernels vs the alternatives</h3>
+    <p>Same block, three ways to run it. <b>A. Folded only</b> expresses the attention with standard operators and lets the compiler fold everything (what you get if you cannot ship the kernel). <b>B. Kernels only</b> runs the custom kernels with the standard layers unfused (the usual way to use a Triton kernel) — in its <code>torch.compile</code> form the kernel is <em>captured</em>, not reimplemented: since PyTorch 2.1 TorchDynamo records a <code>@triton.jit</code> launch as a <code>triton_kernel_wrapper_mutation</code> node with no graph break, and Inductor emits a call to your kernel while fusing only the surrounding operators. <b>C. Both</b> is KernelLens.</p>
+    <div class="viz">
+    <div class="vizh"><span><b>Every way to run the same two-layer block</b> &middot; lower is better</span><span>bar length = latency</span></div>
+    <div class="vrow"><div class="vlab">A &middot; Folded only<small>eager, standard ops</small></div><div class="vtrack">
+    <div class="vbar" style="width:100.0%;--c:var(--c-eager)"></div>
+    </div><div class="vval">28.04 ms</div></div>
+    <div class="vrow"><div class="vlab">A &middot; Folded only<small>torch.compile</small></div><div class="vtrack">
+    <div class="vbar" style="width:54.0%;--c:var(--c-compile)"></div>
+    </div><div class="vval">15.15 ms</div></div>
+    <div class="vrow"><div class="vlab">C &middot; KernelLens<small>ONNX Runtime</small></div><div class="vtrack">
+    <div class="vbar" style="width:33.1%;--c:var(--c-kl)"></div>
+    </div><div class="vval">9.27 ms</div></div>
+    <div class="vrow"><div class="vlab">B &middot; Kernels only<small>eager Triton</small></div><div class="vtrack">
+    <div class="vbar" style="width:29.4%;--c:var(--c-triton)"></div>
+    </div><div class="vval">8.24 ms</div></div>
+    <div class="vrow win"><div class="vlab">C &middot; KernelLens<small>TensorRT</small></div><div class="vtrack">
+    <div class="vbar" style="width:27.2%;--c:var(--c-trt)"></div>
+    </div><div class="vval">7.63 ms</div></div>
+    <div class="vrow win"><div class="vlab">B &middot; Kernels only<small>torch.compile</small></div><div class="vtrack">
+    <div class="vbar" style="width:26.9%;--c:var(--c-triton)"></div>
+    </div><div class="vval">7.55 ms</div></div>
+    <div class="vnote">Folding keeps the standard layers fused; a custom kernel path cannot fold, and a folded-only path cannot express the kernel at all. TensorRT is 1.99&times; faster than the best folded-only formulation.</div>
+    </div>
+    <p class="note">Two-layer block, D=512, H=8, S=4096, batch 1. Relative is versus the folded-only <code>torch.compile</code> row. The kernel wins where folding would materialise; folding wins on the element-wise chain around the projections. KernelLens is the only configuration that has both.</p>
+
+    <h3 style="margin-top:38px">Single-operator latency</h3>
+    <figure class="chart rv">
+      <figcaption>
+        <div><div class="ctitle">Single-operator latency</div><div class="csub">fp32, CUDA events, log scale. Hover the bars.</div></div>
+      </figcaption>
+      <div class="plot" id="ch-micro"></div>
+      <div class="legend">
+        <span class="pill"><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--c-eager);margin-right:6px"></i>PyTorch Eager</span>
+        <span class="pill"><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--c-compile);margin-right:6px"></i>torch.compile</span>
+        <span class="pill"><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--c-triton);margin-right:6px"></i>Native Triton</span>
+        <span class="pill"><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--c-kl);margin-right:6px"></i>KernelLens ORT</span>
+      </div>
+    </figure>
+    <p class="note">The C++ plugin runs the same kernel behind an operator boundary, within 6–13% of native Triton on the three larger operators. The value is deployment, not raw speed on a single op.</p>
+
+    <h3 style="margin-top:38px">End-to-end 4-layer LLaMA decoder</h3>
+    <figure class="chart rv">
+      <figcaption>
+        <div><div class="ctitle">End-to-end decoder</div><div class="csub">D=1024, custom RMSNorm / SwiGLU / RoPE kernels. Pick a metric.</div></div>
+        <div class="ctrl"><div class="seg" id="e2e-metric">
+          <button aria-pressed="true" data-v="TTFT · S=512">TTFT</button>
+          <button aria-pressed="false" data-v="ITL · S=1">ITL</button>
+          <button aria-pressed="false" data-v="Total · 128 tok">total</button>
+          <button aria-pressed="false" data-v="Peak VRAM">VRAM</button>
+        </div></div>
+      </figcaption>
+      <div class="plot" id="ch-e2e"></div>
+    </figure>
+    <p class="note">The TensorRT plugin nearly halves time-to-first-token (4.14 ms vs 7.85/7.92 ms) and attains the lowest peak VRAM, with total generation on par with the baselines.</p>
+
+    <h3 style="margin-top:38px">Numerical parity</h3>
+    <div class="viz">
+      <div class="vizh"><span><b>Maximum absolute difference versus native Triton</b></span><span><i class="vdot" style="--c:var(--c-kl)"></i>bit-identical &nbsp; <i class="vdot" style="--c:var(--c-compile)"></i>near-exact</span></div>
+      <div class="vgrid"><span class="vcell"><i class="vdot" style="--c:var(--c-kl)"></i>LLaMA 3 / Mistral fused RMSNorm<em>0.00e+00</em></span><span class="vcell"><i class="vdot" style="--c:var(--c-kl)"></i>Liger / PaLM SwiGLU<em>0.00e+00</em></span><span class="vcell"><i class="vdot" style="--c:var(--c-kl)"></i>LLaMA 3 / Qwen 2.5 RoPE<em>0.00e+00</em></span><span class="vcell"><i class="vdot" style="--c:var(--c-kl)"></i>Liger fused softmax + cross-entropy<em>0.00e+00</em></span><span class="vcell"><i class="vdot" style="--c:var(--c-kl)"></i>FP8 scaled GEMM, INT4 W4A16 GEMM <span style="color:var(--muted);font-size:11.5px">ORT only</span><em>0.00e+00</em></span><span class="vcell"><i class="vdot" style="--c:var(--c-compile)"></i>Fused residual + RMSNorm<em>≤9.5e-07</em></span><span class="vcell"><i class="vdot" style="--c:var(--c-compile)"></i>Mamba SSM recurrence<em>4.8e-07</em></span><span class="vcell"><i class="vdot" style="--c:var(--c-kl)"></i>In-place mutation, fp32 &amp; fp16<em>0.00e+00</em></span></div>
+      <div class="vnote">Bit-identical on both backends for the research kernels, the conformance patterns and the quantized GEMMs. Two multi-operator fusions land just above zero, which we report rather than round away.</div>
+    </div>
+    <p class="note">Parity is against native Triton execution of the same kernel.</p>
+
+    <h3 style="margin-top:38px">Coverage: module patterns</h3>
+    <p>Parity on specific operators is not enough — the compiler has to handle the many ways a module can call a kernel. A conformance suite (<code>tests/test_conformance.py</code>) exercises fourteen patterns against both backends; all pass at <code>0.00e+00</code>.</p>
+    <div class="grid2 cmp">
+      <div class="rv">
+        <span class="tag" style="--dot: var(--s3)">Graph shapes</span>
+        <ul>
+          <li>Two kernels in one graph</li>
+          <li>The same kernel launched twice — its own ONNX op and plugin per launch</li>
+          <li>Multiple outputs, including different shapes</li>
+          <li>Kernels inside a Python loop and behind a conditional</li>
+          <li>Kernels delegating to nested <code>@triton.jit</code> helpers</li>
+          <li>A 3-D launch grid</li>
+        </ul>
+      </div>
+      <div class="rv">
+        <span class="tag" style="--dot: var(--s1)">Data</span>
+        <ul>
+          <li>Dynamic host scalars</li>
+          <li>Strided / non-contiguous inputs</li>
+          <li>Dynamic batch sizes</li>
+          <li>In-place mutation of an input buffer</li>
+          <li>fp16 and bf16</li>
+          <li><b>Boundary:</b> ONNX Runtime 1.30 cannot bind bf16 to a custom op, so bf16 models use TensorRT, which handles them exactly.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 style="margin-top:38px">Real pretrained models</h3>
+    <figure class="chart rv">
+      <figcaption>
+        <div><div class="ctitle">Real pretrained models</div><div class="csub">OPT, every decoder <code>LayerNorm</code> replaced by the Triton RMSNorm kernel. Prefill latency, S=512, A100-SXM4-80GB, log scale. Pick a precision.</div></div>
+        <div class="ctrl"><div class="seg" id="real-prec">
+          <button aria-pressed="true" data-v="fp32">fp32</button>
+          <button aria-pressed="false" data-v="fp16">fp16</button>
+        </div></div>
+      </figcaption>
+      <div class="plot" id="ch-real"></div>
+      <div class="legend">
+        <span class="pill"><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--c-eager);margin-right:6px"></i>PyTorch Eager</span>
+        <span class="pill"><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--c-compile);margin-right:6px"></i>torch.compile</span>
+        <span class="pill"><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--c-triton);margin-right:6px"></i>KernelLens ORT</span>
+        <span class="pill"><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--c-trt);margin-right:6px"></i>KernelLens TensorRT</span>
+      </div>
+    </figure>
+
+    <p class="note"><b>The result splits by precision.</b> In <b>fp32</b>, <code>torch.compile</code> barely beats eager (1.02&ndash;1.12&times;) because it leaves the operators around the kernel unfused, while KernelLens fuses them: <b>3.2&ndash;5.5&times; faster</b>, growing with model size. In <b>fp16</b>, <code>torch.compile</code> optimises well and KernelLens only matches it &mdash; TensorRT edges it by 1.06&ndash;1.22&times;, and ONNX Runtime is <b>slower</b> (0.67&ndash;0.84&times;). Keeping kernels pays when the baseline leaves the graph unfused; when it already fuses, we break even. Accuracy tracks precision rather than speed: fp32 holds the same greedy token on &ge;98.8% of positions, fp16 under TensorRT on 93.4&ndash;97.9%, and OPT-350M in fp16 under ORT is bit-exact.</p>
+  </section>
+
+  <section id="why" style="--dot: var(--s6)">
+    <span class="tag" style="--dot: var(--s6)">Why an engine</span>
+    <h2>TensorRT is not always faster. Here is when it is.</h2>
+    <p><code>torch.compile</code> is a strong baseline — it fuses, and since PyTorch 2.1 it <em>captures</em> your Triton kernels rather than breaking on them (verified: zero graph breaks). So the honest answer to "why an engine at all?" is not "raw speed". Here is the head-to-head, on the same RTX 5060 Ti, with the custom kernels captured on both sides.</p>
+    <div class="viz">
+    <div class="vizh"><span><b>torch.compile versus KernelLens TensorRT</b> &middot; upper bar = torch.compile, lower = TensorRT</span><span>bar length = latency</span></div>
+    <div class="vrow"><div class="vlab">LLaMA decoder prefill<small>S=512, fp16 &middot; TensorRT wins by 1.90&times;</small></div><div class="vtrack">
+    <div class="vbar" style="width:100.0%;--c:var(--c-compile)"></div>
+    <div class="vbar" style="width:52.3%;--c:var(--c-trt)"></div>
+    </div><div class="vval"><b style="color:var(--c-compile)">7.92</b><br><b style="color:var(--c-trt)">4.14</b></div></div>
+    <div class="vrow"><div class="vlab">Conv model + custom kernel<small>fp32 &middot; torch.compile wins by 1.10&times;</small></div><div class="vtrack">
+    <div class="vbar" style="width:91.2%;--c:var(--c-compile)"></div>
+    <div class="vbar" style="width:100.0%;--c:var(--c-trt)"></div>
+    </div><div class="vval"><b style="color:var(--c-compile)">10.40</b><br><b style="color:var(--c-trt)">11.40</b></div></div>
+    <div class="vrow"><div class="vlab">Conv model + custom kernel<small>fp16 &middot; torch.compile wins by 1.84&times;</small></div><div class="vtrack">
+    <div class="vbar" style="width:54.3%;--c:var(--c-compile)"></div>
+    <div class="vbar" style="width:100.0%;--c:var(--c-trt)"></div>
+    </div><div class="vval"><b style="color:var(--c-compile)">4.45</b><br><b style="color:var(--c-trt)">8.20</b></div></div>
+    <div class="vrow"><div class="vlab">Transformer block<small>fp32 &middot; tie wins</small></div><div class="vtrack">
+    <div class="vbar" style="width:99.0%;--c:var(--c-compile)"></div>
+    <div class="vbar" style="width:100.0%;--c:var(--c-trt)"></div>
+    </div><div class="vval"><b style="color:var(--c-compile)">7.55</b><br><b style="color:var(--c-trt)">7.63</b></div></div>
+    <div class="vnote">We report both directions. TensorRT wins decisively on GEMM-heavy transformer prefill and loses on convolution-heavy graphs, where the engine's convolution performance is the gap. A fixed-factor claim would be wrong.</div>
+    </div>
+    <p class="note">TensorRT wins on GEMM-heavy transformer prefill, where its kernels and folding beat Inductor's generated GEMMs. On convolution-heavy graphs it is still behind, even after two fixes: the plugin now declares channel-last formats for pointwise kernels (so the engine no longer inserts reformats around it), and it now enforces the dtype the kernel was compiled for (previously the engine silently ran fp16 models in fp32). Together these took the fp16 conv case from 10.86 to 8.20 ms with exact parity; the remaining gap is the engine's convolution performance, not the plugin.</p>
+    <div class="grid2 cmp">
+      <div class="rv">
+        <span class="tag" style="--dot: var(--s3)">Why an engine wins</span>
+        <h3 style="margin-top:10px">Structural, not just numerical</h3>
+        <ul>
+          <li>No Python interpreter and no <code>libtorch</code> in the serving path — no GIL, a small footprint, deployable from C++, Rust, Go or Java services.</li>
+          <li>A serialized engine that cold-starts without recompiling.</li>
+          <li>Engine-level VRAM planning: <b>464 MB</b> peak versus 473/478 MB in our decoder.</li>
+          <li>Dynamic shapes handled by optimization profiles rather than recompiles and guards.</li>
+          <li>Quantized inference (INT8/FP8 with calibration), where TensorRT is mature.</li>
+        </ul>
+      </div>
+      <div class="rv">
+        <span class="tag" style="--dot: var(--s1)">Why the kernel wins</span>
+        <h3 style="margin-top:10px">Folding cannot express everything</h3>
+        <ul>
+          <li>If you cannot ship the kernel, the folded-only formulation is <b>2×</b> slower — it must materialise the O(N²) attention.</li>
+          <li>The engine folds the standard layers <em>around</em> your kernel; the unfused path cannot.</li>
+          <li>Custom kernels stay kernels for exactly the operations folding cannot express efficiently.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="install" style="--dot: var(--s5)">
+    <span class="tag" style="--dot: var(--s5)">Install &amp; API</span>
+    <h2>Three lines to a C++ engine.</h2>
+    <div class="tabs" id="inst-tabs">
+      <button aria-pressed="true" data-v="pip">pip</button>
+      <button aria-pressed="false" data-v="src">from source</button>
+    </div>
+    <pre id="inst-pip"><code class="language-bash">pip install kernel-lens          # core compiler
+pip install kernel-lens[ort]     # + ONNX Runtime backend
+pip install kernel-lens[trt]     # + TensorRT backend
+pip install kernel-lens[all]     # both</code></pre>
+    <pre id="inst-src" hidden><code class="language-bash">git clone https://github.com/Just1truc/kernel_lens.git
+cd kernel_lens
+pip install -e .[all]</code></pre>
+
+    <div class="api">
+      <div class="apirow"><code>kl.compile(model, inputs, name, backends)</code><p>Trace, export ONNX, synthesize and build the requested plugins. Returns a <code>CompiledModel</code>.</p></div>
+      <div class="apirow"><code>compiled.run(inputs, backend)</code><p>Execute with zero-copy VRAM binding; returns torch tensors.</p></div>
+      <div class="apirow"><code>kl.load(name)</code><p>Reload a compiled model from the cache without recompiling (production cold start).</p></div>
+      <div class="apirow"><code>kl.extract_libs(compiled, dest_dir)</code><p>Copy the <code>.onnx</code>, <code>.so</code> and <code>.engine</code> artifacts into a deploy directory.</p></div>
+      <div class="apirow"><code>kl.set_verbose(True)</code><p>Print manifests, AST decisions, grid expressions and launch geometry.</p></div>
+    </div>
+    <p class="note">Requirements: Linux x86-64, Python ≥ 3.10, CUDA ≥ 12.0, PyTorch ≥ 2.0, Triton ≥ 2.1, and <code>nvcc</code> + <code>g++</code> on <code>PATH</code>. Environment: <code>KERNEL_LENS_CACHE_DIR</code> (put it on a persistent volume), <code>KERNEL_LENS_CCBIN</code> (host compiler for <code>nvcc</code>; CUDA toolkits before 12.9 reject GCC&nbsp;13’s exception specifiers, so set this to <code>g++-12</code> there), <code>KERNEL_LENS_DEBUG</code>, <code>TENSORRT_INCLUDE_DIR</code>.</p>
+  </section>
+
+  <section id="status" style="--dot: var(--s1)">
+    <span class="tag" style="--dot: var(--s1)">Status</span>
+    <h2>Where the work stands.</h2>
+    <ul class="steps">
+      <li style="--dot: var(--s1)"><span class="d"></span><span>Tracing, AST taxonomy, manifest assembly</span><span class="s done">done</span></li>
+      <li style="--dot: var(--s2)"><span class="d"></span><span>ONNX injection, CPU scalars, in-place aliasing</span><span class="s done">done</span></li>
+      <li style="--dot: var(--s3)"><span class="d"></span><span>OrtCustomOp + IPluginV2DynamicExt synthesis</span><span class="s done">done</span></li>
+      <li style="--dot: var(--s4)"><span class="d"></span><span>Zero-copy binding, cold-start caching</span><span class="s done">done</span></li>
+      <li style="--dot: var(--s5)"><span class="d"></span><span>16-byte alignment guard, PTX ISA clamping</span><span class="s done">done</span></li>
+      <li style="--dot: var(--s6)"><span class="d"></span><span>FP8 / INT4 quantized GEMM (exact)</span><span class="s done">done</span></li>
+      <li style="--dot: var(--s2)"><span class="d"></span><span>Folding + kernels benchmark</span><span class="s done">done</span></li>
+      <li style="--dot: var(--s4)"><span class="d"></span><span>Second architecture (A100 / <code>sm_80</code>): 14/14 conformance, bit-exact</span><span class="s done">done</span></li>
+      <li style="--dot: var(--s5)"><span class="d"></span><span>Real pretrained models: OPT-125M → 6.7B, both engines, both precisions</span><span class="s done">done</span></li>
+      <li style="--dot: var(--s3)"><span class="d"></span><span>TensorRT-LLM backend (non-attention kernels)</span><span class="s">next</span></li>
+      <li style="--dot: var(--s6)"><span class="d"></span><span>Auto-tune dispatch, CUDA Graphs, NCCL, Metal/WebGPU</span><span class="s">next</span></li>
+    </ul>
+  </section>
+
+  <section id="faq" style="--dot: var(--s6)">
+    <span class="tag" style="--dot: var(--s6)">Questions</span>
+    <h2>Fair objections.</h2>
+    <details><summary>Does KernelLens make my kernel faster than Triton?</summary><p>It runs the identical kernel behind a C++ operator boundary, so a single operator is within 6–13% of native Triton. The win is the combination: the engine folds the standard layers around your kernel, which the unfused path cannot, and the folded-only path cannot express the kernel at all. On a two-layer block that is 1.99× versus folded-only and 1.08× versus the unfused kernel path.</p></details>
+    <details><summary>Then why use it?</summary><p>Because production serves C++ engines. KernelLens lets a custom Triton kernel live inside TensorRT or ONNX Runtime, where the standard layers are folded and tuned, and the memory planner covers everything — and it removes the hand-written plugin.</p></details>
+    <details><summary>Is the parity exact?</summary><p>Against native Triton, <code>0.00e+00</code> — bit-identical — for the research kernels, the conformance patterns and the quantized GEMMs on both backends. Two workloads that fuse several operators (residual+RMSNorm, Mamba's scan) land at <code>≤9.5e-07</code> and <code>4.8e-07</code>, which we report rather than round to zero.</p></details>
+    <details><summary>Which hardware?</summary><p>Two architectures: an RTX 5060&nbsp;Ti (<code>sm_120a</code>, Blackwell) for the folding, latency, end-to-end and quantized results, and an A100-SXM4-80GB (<code>sm_80</code>, Ampere) for the conformance, parity and real-model results. Results are reported per configuration and never blended. KernelLens targets CUDA C++ engines on NVIDIA hardware; other vendors and clusters are not extrapolated.</p></details>
+  </section>
+
+  <section id="paper" style="--dot: var(--s2)">
+    <span class="tag" style="--dot: var(--s2)">Paper</span>
+    <h2>Compiling PyTorch Triton Kernels into C++ Inference Plugins.</h2>
+    <p>The technical report derives the parameter taxonomy, the manual pipeline, and the KernelLens compile and run pipelines, and reports the folding, parity, latency, end-to-end and quantized results. A TMLR-formatted variant is generated from the same source.</p>
+    <p class="cta"><a class="btn solid" href="kernel_lens_paper.pdf">Read the paper (PDF)</a>
+       <a class="btn" href="kernel_lens_tmlr_paper.pdf">TMLR version</a>
+       <a class="btn" href="https://github.com/Just1truc/kernel_lens">Source &amp; reproduction scripts</a></p>
+    <pre><code class="language-bibtex">@article{duc2026kernellens,
+  title       = {KernelLens: Compiling PyTorch Triton Kernels into C++ Inference Plugins},
+  author      = {Duc, Justin},
+  institution = {Galiad Research},
+  year        = {2026},
+  version     = {1.2.1},
+  doi         = {10.5281/zenodo.23194523}
+}</code></pre>
+  </section>
+
+  <footer>
+    <span>KernelLens · Justin Duc · Galiad Research · MIT</span>
+    <span>
+      <a href="https://github.com/Just1truc/kernel_lens">repository</a> ·
+      <a href="https://pypi.org/project/kernel-lens/">pypi</a> ·
+      <a href="https://github.com/Just1truc/kernel_lens/issues">issues</a> ·
+      <a href="https://doi.org/10.5281/zenodo.23194523">doi</a>
+    </span>
+  </footer>
+</div>
+<div class="stripe-end"></div>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>if (window.hljs) { document.querySelectorAll("pre code").forEach(function (el) { hljs.highlightElement(el); }); }</script>
+<script src="assets/site.js"></script>
+<script>
+  setTimeout(function () {
+    document.querySelector('#real-prec button[data-v="fp16"]').click();
+    setTimeout(function () {
+      var seg = document.getElementById("ch-real").innerHTML;
+      var rects = seg.match(/<rect[^>]*height="([-\d.]+)"/g) || [];
+      document.title = "RECTS=" + rects.length + " | " + rects.map(function(r){return r.match(/height="([-\d.]+)"/)[1];}).join(",")
+        + " || pressed=" + Array.from(document.querySelectorAll('#real-prec button')).map(function(b){return b.dataset.v+":"+b.getAttribute('aria-pressed');}).join(" ");
+    }, 600);
+  }, 700);
+</script>
+</body>
+</html>

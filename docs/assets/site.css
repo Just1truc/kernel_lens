@@ -255,20 +255,7 @@ footer { border-top: 1px solid var(--line); padding: 34px 0 56px; font-size: 14p
 .vcell { display: flex; align-items: center; gap: 9px; font-size: 13.5px; }
 .vdot { flex: none; width: 11px; height: 11px; border-radius: 50%; background: var(--c); }
 .vcell em { font-style: normal; margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.vsvg { display: block; width: 100%; height: auto; margin-top: 4px; }
 @media (max-width: 620px) { .vrow { grid-template-columns: 1fr; gap: 4px; } .vval { text-align: left; } }
-
-/* svg dot plot */
-.vsvg .ax { font: 12.5px var(--body); fill: var(--ink); }
-.vsvg .ax.g { font: 600 11.5px var(--display); letter-spacing: .06em; text-transform: uppercase; fill: var(--muted); }
-.vsvg .ax.v { font-size: 11.5px; fill: var(--muted); font-variant-numeric: tabular-nums; }
-.vsvg .ax.t { font-size: 11px; fill: var(--muted); text-anchor: middle; }
-.vsvg .nd.ort { fill: var(--c-triton); }
-.vsvg .nd.trt { fill: var(--c-trt); }
-.vsvg .l.k1 { stroke: var(--c-eager); stroke-width: 2; stroke-dasharray: 2 2; stroke-linecap: round; }
-.vsvg .grid { stroke: var(--line); stroke-width: 1; }
-.vsvg .par { stroke: var(--muted); stroke-width: 1.5; opacity: .55; }
-.vsvg .ax.parlab { font-size: 11px; fill: var(--muted); text-anchor: middle; opacity: .8; }
 
 /* card grid + signature list (replace the last two tables) */
 .gaps { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 14px; margin-top: 26px; }

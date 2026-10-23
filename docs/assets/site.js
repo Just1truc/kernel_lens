@@ -98,6 +98,7 @@
 
   /* Vertical grouped bar chart. opts: {groups, series:[{name,color,values}], unit, log, dec} */
   function groupedBars(host, opts) {
+    if (!host) return;
     host.innerHTML = "";
     const W = 760, H = 360, P = { t: 18, r: 14, b: 74, l: 54 };
     const iw = W - P.l - P.r, ih = H - P.t - P.b;
@@ -112,7 +113,7 @@
       return P.t + ih - ((a - b0) / (b1 - b0)) * ih;
     };
     // gridlines + y labels
-    const ticks = log ? [0.01, 0.03, 0.1, 0.3, 1] : [0, yMax / 4, yMax / 2, (3 * yMax) / 4, yMax];
+    const ticks = log ? (opts.logTicks || [0.01, 0.03, 0.1, 0.3, 1]) : [0, yMax / 4, yMax / 2, (3 * yMax) / 4, yMax];
     ticks.forEach((tv) => {
       if (tv < yMin || tv > yMax) return;
       const y = Y(tv);
@@ -146,6 +147,7 @@
 
   /* Vertical single-series bars with per-bar colors. opts: {labels, values, colors, unit, dec} */
   function bars(host, opts) {
+    if (!host) return;
     host.innerHTML = "";
     const W = 760, H = 360, P = { t: 18, r: 14, b: 64, l: 54 };
     const iw = W - P.l - P.r, ih = H - P.t - P.b;
@@ -208,6 +210,30 @@
     },
   };
 
+  /* Real OPT checkpoints, every decoder LayerNorm swapped for the Triton RMSNorm
+     kernel. Prefill latency, S=512, A100-SXM4-80GB. Source:
+     docs/assets/data/a100/real_model_results.md */
+  const REAL = {
+    fp32: {
+      groups: ["OPT-125M", "OPT-350M", "OPT-1.3B", "OPT-2.7B"],
+      series: [
+        { name: "PyTorch Eager", color: "--c-eager", values: [12.1, 33.2, 98.6, 175.9] },
+        { name: "torch.compile", color: "--c-compile", values: [10.9, 27.7, 88.0, 172.7] },
+        { name: "KernelLens ORT", color: "--c-triton", values: [4.8, 10.2, 23.4, 37.4] },
+        { name: "KernelLens TensorRT", color: "--c-trt", values: [3.4, 8.6, 19.0, 31.7] },
+      ],
+    },
+    fp16: {
+      groups: ["OPT-125M", "OPT-350M", "OPT-1.3B", "OPT-2.7B", "OPT-6.7B"],
+      series: [
+        { name: "PyTorch Eager", color: "--c-eager", values: [5.7, 10.3, 14.7, 22.2, 37.0] },
+        { name: "torch.compile", color: "--c-compile", values: [2.4, 5.1, 10.8, 17.5, 33.8] },
+        { name: "KernelLens ORT", color: "--c-triton", values: [3.6, 7.2, 15.6, 22.6, 40.2] },
+        { name: "KernelLens TensorRT", color: "--c-trt", values: [2.0, 4.8, 9.9, 16.5, 31.1] },
+      ],
+    },
+  };
+
   const renderMicro = () => groupedBars($("#ch-micro"), Object.assign({ log: true, unit: "ms", dec: 3 }, MICRO));
   const renderSpeed = () => groupedBars($("#ch-speed"), Object.assign({ unit: "×", dec: 2 }, SPEED));
 
@@ -215,6 +241,15 @@
   const renderE2E = () => {
     const m = E2E.metrics[e2eMetric];
     bars($("#ch-e2e"), { labels: E2E.labels, colors: E2E.colors, values: m.values, unit: m.unit, dec: m.dec, metric: e2eMetric });
+  };
+
+  let realPrec = "fp32";
+  const renderReal = () => {
+    const p = REAL[realPrec];
+    groupedBars($("#ch-real"), {
+      groups: p.groups, series: p.series, log: true,
+      logTicks: [1, 2, 5, 10, 20, 50, 100, 200], unit: "ms", dec: 1,
+    });
   };
 
   /* controls */
@@ -228,6 +263,7 @@
     });
   };
   wireSeg("#e2e-metric", (v) => { e2eMetric = v; renderE2E(); });
+  wireSeg("#real-prec", (v) => { realPrec = v; renderReal(); });
 
   /* install tabs */
   (function tabs() {
@@ -259,7 +295,7 @@
   })();
 
   /* render all + theme re-render */
-  const renderAll = () => { renderMicro(); renderSpeed(); renderE2E(); };
+  const renderAll = () => { renderMicro(); renderSpeed(); renderE2E(); renderReal(); };
   renderAll();
   if (window.matchMedia) {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
