@@ -63,11 +63,16 @@ compiled_model.run(inputs, backend="onnx"|"tensorrt")
   dynamic scalars, strided and dynamic inputs, loops, conditionals, nested
   helpers, in-place mutation, 3-D grids, autotune, and fp16/bf16.
 
-> **Honest scope.** KernelLens is research-grade. The documentation clearly
-> separates what is **implemented and measured** from what is **planned**. Two
-> TensorRT paths (in-place aliasing, INT8 dequantisation) are known to be
-> incorrect and are reported rather than hidden. See the
-> [verification page](https://just1truc.github.io/kernel_lens/verification/).
+> **Honest scope.** KernelLens is research-grade, and the results are reported
+> per configuration rather than blended. The composition is bit-exact against
+> native Triton (`0.00e+00`) across the research kernels, the fourteen
+> conformance patterns and the quantized GEMMs, on both backends; two
+> multi-operator fusions land just above zero and are reported as such. Keeping
+> the kernel pays when the baseline leaves the graph unfused and breaks even when
+> it already fuses. The TensorRT-LLM backend is design-only (see
+> [`docs/assets/data/a100/trtllm_backend_design.md`](docs/assets/data/a100/trtllm_backend_design.md)),
+> and the quantized GEMMs are validated on ONNX Runtime only. Full methodology
+> and every raw JSON are under [`docs/assets/data/`](docs/assets/data/).
 
 ## Installation
 
@@ -79,7 +84,14 @@ pip install kernel-lens[all]     # both
 ```
 
 **Requirements:** Linux x86-64, Python ≥ 3.10, CUDA ≥ 12.0, PyTorch ≥ 2.0,
-Triton ≥ 2.1, and `nvcc` + `g++` on `PATH`.
+Triton ≥ 2.1, and `nvcc` + `g++` on `PATH`. TensorRT must be `< 11` (the
+generator emits `IPluginV2DynamicExt`).
+
+**Environment:** `KERNEL_LENS_CACHE_DIR` (put it on a persistent volume so the
+`.so` / `.engine` artifacts survive `kl.load`), `KERNEL_LENS_CCBIN` (host
+compiler for `nvcc` — CUDA toolkits before 12.9 reject GCC 13's exception
+specifiers, so set it to `g++-12` there), `KERNEL_LENS_DEBUG`,
+`TENSORRT_INCLUDE_DIR`.
 
 ## Quickstart
 
@@ -122,22 +134,52 @@ out_trt = compiled.run((x,), backend="tensorrt")
 
 ## Results at a glance
 
-Measured on an **RTX 5060 Ti (Blackwell, `sm_120a`)**, CUDA 12.8, PyTorch 2.14,
-Triton 3.8, ONNX Runtime 1.30, TensorRT 10.16. Full tables and methodology are on
-the [results page](https://just1truc.github.io/kernel_lens/#results).
+Two architectures: an **RTX 5060 Ti** (Blackwell, `sm_120a`) for the folding,
+single-operator, end-to-end and quantized results, and an **A100-SXM4-80GB**
+(Ampere, `sm_80`) for the conformance, parity and real-model results. Results are
+reported per configuration and never blended. Full methodology, complete tables
+and every raw JSON are on the
+[results page](https://just1truc.github.io/kernel_lens/#results) and under
+[`docs/assets/data/`](docs/assets/data/).
 
-- **Fold + keep, and it pays**: on a two-layer block whose attention is a custom
-  squared-ReLU flash kernel, KernelLens runs it in **7.63 ms**, versus **15.15 ms**
-  for the folded-only `torch.compile` formulation and **28.04 ms** for eager
-  folding — **1.99×** and **3.68×** faster — and **1.08×** faster than the
-  unfused Triton-kernel path. The engine folds the standard layers; the kernel
-  keeps the operations folding cannot express.
-- **Exact parity with native Triton** (`MaxDiff = 0.00e+00`) for LLaMA 3 RMSNorm,
-  PaLM SwiGLU, Qwen 2.5 RoPE, Liger fused cross-entropy, in-place mutation and
-  the quantized GEMMs, on both backends.
-- **Lowest VRAM** in a 4-layer LLaMA decoder: **464 MB** peak vs 478 MB (eager)
-  and 473 MB (`torch.compile`), with the fastest time-to-first-token (4.14 ms vs
-  7.85/7.92 ms).
+**The code you don't write.** The deployment is **nine lines of Python**; the C++
+it replaces is **1,137 lines across six files** for one fused RMSNorm kernel on
+both backends, measured with `tests/measure_codegen.py`.
+
+**Real pretrained models.** Every decoder `LayerNorm` of a real OPT checkpoint
+(125M → 6.7B) replaced by the Triton RMSNorm kernel, graded against
+`torch.compile` — the baseline that *captures the same Triton kernels* rather
+than reimplementing them. The result splits by precision:
+
+- **fp32** — `torch.compile` barely improves on eager (1.02–1.12×) because it
+  leaves the operators around the kernel unfused. KernelLens fuses them:
+  **3.18–5.45× faster** under TensorRT and **2.27–4.62×** under ONNX Runtime,
+  and the margin grows with model size.
+- **fp16** — `torch.compile` optimises well there, so we only match it: TensorRT
+  edges it by **1.06–1.22×**, while ONNX Runtime is consistently **slower
+  (0.67–0.84×)** — per-node dispatch dominates when the graph already fuses.
+- **Accuracy tracks precision, not speed.** fp32 holds the same greedy token on
+  **≥ 98.8%** of positions; fp16 under TensorRT falls to 93.4–97.9%. OPT-350M in
+  fp16 under ONNX Runtime is bit-exact.
+
+**Fold + keep, and it pays.** On a two-layer block whose attention is a custom
+squared-ReLU flash kernel, KernelLens runs it in **7.63 ms**, versus **15.15 ms**
+for the folded-only `torch.compile` formulation and **28.04 ms** for eager
+folding — **1.99×** and **3.68×** faster. Against the unfused kernel path it is
+**1.08×** faster than eager Triton (8.24 ms) and level with `torch.compile`
+(7.55 ms). The engine folds the standard layers; the kernel keeps the operations
+folding cannot express.
+
+**Exact parity with native Triton** (`MaxDiff = 0.00e+00`) for LLaMA 3 RMSNorm,
+PaLM SwiGLU, Qwen 2.5 RoPE, Liger fused cross-entropy, in-place mutation and the
+quantized GEMMs, on both backends — and across all **fourteen** module patterns
+of `tests/test_conformance.py`. Two multi-operator fusions are near-exact rather
+than exact (`≤ 9.5e-07` residual+RMSNorm, `4.8e-07` Mamba's scan) and are
+reported as such.
+
+**Lowest VRAM** in a 4-layer LLaMA decoder: **464 MB** peak vs 478 MB (eager)
+and 473 MB (`torch.compile`), with the fastest time-to-first-token (4.14 ms vs
+7.85/7.92 ms).
 
 ## Documentation
 
@@ -145,9 +187,11 @@ the [results page](https://just1truc.github.io/kernel_lens/#results).
 | :--- | :--- |
 | [Problem](https://just1truc.github.io/kernel_lens/#problem) | The five gaps a naive export hits |
 | [Pipeline](https://just1truc.github.io/kernel_lens/#pipeline) | What you build by hand vs. the compile/run pipeline |
-| [Results](https://just1truc.github.io/kernel_lens/#results) | Folding + kernels, parity, latency, end-to-end |
+| [Results](https://just1truc.github.io/kernel_lens/#results) | Folding + kernels, parity, conformance, single-operator and end-to-end latency, **real pretrained models** |
+| [Why an engine](https://just1truc.github.io/kernel_lens/#why) | `torch.compile` vs TensorRT, both directions |
 | [Install & API](https://just1truc.github.io/kernel_lens/#install) | Installation and API reference |
 | [Status](https://just1truc.github.io/kernel_lens/#status) | Roadmap |
+| [FAQ](https://just1truc.github.io/kernel_lens/#faq) | Fair objections |
 | [Paper](https://just1truc.github.io/kernel_lens/#paper) | Abstract and citation |
 
 ## Reproduce the results
@@ -162,14 +206,30 @@ python tests/test_research_kernels.py          # numerical parity
 python tests/benchmark_research_kernels.py     # single-operator latency
 python tests/benchmark_e2e_llama.py            # end-to-end decoder
 python tests/test_fp8_gemm.py                  # FP8 Tensor Core path
+python tests/measure_codegen.py                # generated C++ volume, per file
+python tests/benchmark_real_model.py --model facebook/opt-1.3b   # real OPT, both precisions
 ```
+
+The real-model matrix (OPT-125M → 6.7B, fp32 and fp16) runs unattended on a fresh
+CUDA host: `scripts/remote_setup.sh` provisions nvcc, TensorRT, `onnxruntime-gpu`
+and `transformers` and installs the package; `scripts/remote_bench_all.sh` then
+sweeps the matrix into `results/` and writes `summary.json`, recording failures
+instead of aborting. See
+[`docs/assets/data/a100/runpod_runbook.md`](docs/assets/data/a100/runpod_runbook.md) for the
+exact invocation and the environment traps (CUDA 12.8's `nvcc` does not build
+against a modern libstdc++; CUDA 13.3's does).
 
 Raw measurement JSON is committed under [`docs/assets/data/`](docs/assets/data/).
 
 ## Technical report
 
-The paper source is [`kernel_lens_fresh.tex`](kernel_lens_fresh.tex); the TMLR
-variant is generated from it with `python3 scripts/make_tmlr_fresh.py`.
+The paper source is [`kernel_lens_fresh.tex`](kernel_lens_fresh.tex). Two derived
+variants are generated from it and must not be edited by hand:
+`scripts/make_mlsys.py` produces the 2-column MLSys form
+(`kernel_lens_mlsys.tex`) and `scripts/make_tmlr_fresh.py` produces the TMLR
+forms — `kernel_lens_tmlr_fresh.tex` (named preprint) and
+`kernel_lens_tmlr_submission.tex` (anonymized; **do not publish it alongside the
+named preprint**).
 
 ```bibtex
 @article{duc2026kernellens,
@@ -177,7 +237,7 @@ variant is generated from it with `python3 scripts/make_tmlr_fresh.py`.
   author      = {Duc, Justin},
   institution = {Galiad Research},
   year        = {2026},
-  version     = {1.2.0},
+  version     = {1.2.1},
   doi         = {10.5281/zenodo.23194523},
   url         = {https://doi.org/10.5281/zenodo.23194523}
 }

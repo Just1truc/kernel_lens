@@ -71,8 +71,9 @@ re-bitwidth'd; (ii)~capturing the launch grid symbolically and transpiling it to
 C++ evaluated at run time; and (iii)~classifying each argument as input, output
 or in-place by static AST analysis, including through nested helper functions.
 Re-establishing the interface \emph{inside} the ONNX graph lets the engine keep
-its graph optimisations around the plugin. The result replaces roughly
-$1{,}300$~lines of hand-written C++ per kernel with two Python calls. On an
+its graph optimisations around the plugin. The result replaces $1{,}137$~lines
+of hand-written C++ --- measured, not estimated, on one fused RMSNorm kernel
+built for both backends --- with nine lines of Python. On an
 RTX~5060~Ti, KernelLens reproduces native Triton exactly on ten research
 workloads and fourteen module patterns, and on a block whose attention is a
 custom squared-ReLU flash kernel it is $1.99\times$ faster than the folded-only
@@ -386,9 +387,10 @@ engines.
 \paragraph{With KernelLens.} Listing~\ref{lst:kl} is the entire deployment. The
 kernel and module are the ones the user already wrote.
 
-\begin{lstlisting}[caption={The KernelLens side: two calls.},label={lst:kl},language=Python]
+\begin{lstlisting}[caption={The KernelLens side: the entire deployment, nine lines.},label={lst:kl},language=Python]
 import kernel_lens as kl
 
+# the Triton kernel + module you already wrote
 compiled = kl.compile(
     RMSNorm(4096).cuda(), (x,),
     name="llama3_rmsnorm",
@@ -429,7 +431,7 @@ class RmsnormPluginCreator : public nvinfer1::IPluginCreator { /* ... */ };
 \end{lstlisting}
 
 \paragraph{Measured volume.} Table~\ref{tab:loc} counts the generated artifacts
-for this one kernel, compiled for both backends. It is $\approx 1{,}329$ lines of
+for this one kernel, compiled for both backends. It is $1{,}137$ lines of
 C++ across six files---before CMake, the FX-graph patch, or the engine-driving
 code.
 
@@ -438,13 +440,13 @@ code.
 \begin{tabular}{l r l}
 \toprule
 \textbf{Artifact} & \textbf{Lines} & \textbf{Author} \\ \midrule
-\texttt{ort\_plugins/<kernel>Op.cu} & 909 & hand, without KernelLens \\
-\texttt{ort\_plugins/<kernel>Op.h} & 63 & hand \\
+\texttt{ort\_plugins/<kernel>Op.cu} & 686 & hand, without KernelLens \\
+\texttt{ort\_plugins/<kernel>Op.h} & 60 & hand \\
 \texttt{ort\_plugins/register\_ops.cpp} & 25 & hand \\
-\texttt{trt\_plugins/<kernel>Plugin.h} & 112 & hand \\
-\texttt{trt\_plugins/<kernel>Plugin.cu} & $\approx$300 & hand \\
-\texttt{trt\_plugins/register\_plugins.cpp} & $\approx$30 & hand \\ \midrule
-\textbf{Total, one kernel} & $\mathbf{\approx 1{,}329}$ & \textbf{KernelLens: 0} \\
+\texttt{trt\_plugins/<kernel>Plugin.h} & 113 & hand \\
+\texttt{trt\_plugins/<kernel>Plugin.cu} & 230 & hand \\
+\texttt{trt\_plugins/register\_plugins.cpp} & 23 & hand \\ \midrule
+\textbf{Total, one kernel} & $\mathbf{1{,}137}$ & \textbf{KernelLens: 0} \\
 \bottomrule
 \end{tabular}
 \captionof{table}{Generated C++ volume for a single fused RMSNorm kernel, both backends,
@@ -462,6 +464,13 @@ All measurements are on a single NVIDIA GeForce RTX 5060~Ti (16~GB, Blackwell,
 ONNX Runtime~1.30.0 and TensorRT~10.16.1.11. Timings use CUDA events after
 warm-up. Parity is measured against native Triton execution of the same kernel,
 which isolates the recovered plumbing from the arithmetic.
+
+The conformance, parity and real-model results are additionally reproduced on a
+second architecture: an NVIDIA A100-SXM4-80GB (Ampere, \texttt{sm\_80}) with
+driver 595.91, CUDA~13.3, PyTorch~2.8.0, Triton~3.4.0, ONNX
+Runtime~1.31.0 and TensorRT~10.16.1.11. Table~\ref{tab:real} is measured on
+that configuration. Results are reported per configuration and never blended
+across them.
 
 \subsection{Numerical parity}
 
@@ -588,6 +597,70 @@ exercised. Both reach exact parity with native Triton.}
 \label{tab:quant}
 \end{center}
 
+\subsection{Real pretrained models}
+
+The models above are controlled PyTorch modules, which keeps the plumbing
+comparable but leaves open whether the approach scales to a model people
+actually serve. We therefore take real pretrained OPT checkpoints, replace every
+\texttt{LayerNorm} in the decoder with the Triton RMSNorm kernel above
+(carrying the weight across), and compile the result. OPT is used because its
+architecture is exportable through the TorchScript path the compiler relies on;
+the rotary-embedding families are not, and that is a property of the ONNX
+exporter rather than of the recovered contract, since plain
+\texttt{torch.onnx.export} fails on them identically.
+
+\begin{center}
+\footnotesize
+\begin{tabular}{llrrrr}
+\toprule
+Model & dtype & Eager & \texttt{torch.compile} & ORT & TensorRT \\
+\midrule
+OPT-125M & fp32 & 12.1\,ms & 10.9\,ms & 4.8\,ms & \textbf{3.4}\,ms \\
+OPT-125M & fp16 & 5.7\,ms & 2.4\,ms & 3.6\,ms & \textbf{2.0}\,ms \\
+OPT-1.3B & fp32 & 98.6\,ms & 88.0\,ms & 23.4\,ms & \textbf{19.0}\,ms \\
+OPT-1.3B & fp16 & 14.7\,ms & 10.8\,ms & 15.6\,ms & \textbf{9.9}\,ms \\
+OPT-2.7B & fp32 & 175.9\,ms & 172.7\,ms & 37.4\,ms & \textbf{31.7}\,ms \\
+OPT-2.7B & fp16 & 22.2\,ms & 17.5\,ms & 22.6\,ms & \textbf{16.5}\,ms \\
+OPT-6.7B & fp16 & 37.0\,ms & 33.8\,ms & 40.2\,ms & \textbf{31.1}\,ms \\
+\bottomrule
+\end{tabular}
+\captionof{table}{Real pretrained OPT checkpoints with every decoder
+\texttt{LayerNorm} replaced by the Triton RMSNorm kernel. Prefill latency,
+$S{=}512$, on an A100-SXM4-80GB. \texttt{torch.compile} is the meaningful
+baseline: it captures the same kernels rather than reimplementing them. Bold
+marks the fastest configuration, which is TensorRT at every size and precision.}
+\label{tab:real}
+\end{center}
+
+TensorRT is the fastest configuration throughout, but the comparison that
+matters is against \texttt{torch.compile} rather than eager, since it captures
+the same Triton kernels and differs only in how the surrounding operators are
+scheduled. The picture splits by precision.
+
+In fp32 \texttt{torch.compile} barely improves on eager ($1.02$--$1.12\times$)
+because it does not fuse the operators around the kernel, whereas KernelLens
+does: TensorRT is $3.18\times$, $4.62\times$ and $5.45\times$ faster than
+\texttt{torch.compile} on 125M, 1.3B and 2.7B, and the margin grows with model
+size. That growth is the graph-level fusion at work, not the normalisation
+kernels.
+
+In fp16 the ordering reverses. \texttt{torch.compile} then optimises well
+($2.4\times$ over eager at 125M), and KernelLens only matches it: TensorRT
+edges \texttt{torch.compile} by $1.06$--$1.22\times$ across all four sizes,
+while ONNX Runtime is consistently \emph{slower} ($0.67$--$0.84\times$). The
+compiled fp16 graph for OPT-125M carries $1{,}583$ nodes ($76$ \texttt{Cast},
+$345$ \texttt{Unsqueeze}, $549$ \texttt{Constant}) against $25$ custom
+operators, so per-node dispatch overhead dominates at these shapes.
+
+Keeping kernels therefore pays only when the surrounding graph is left unfused.
+When the baseline already fuses, it breaks even, and we do not claim otherwise.
+
+Numerical agreement tracks precision rather than speed. In fp32 every model
+retains the same argmax on at least $98.8\%$ of positions and the mean absolute
+logit difference stays below $6.3\times10^{-3}$; OPT-350M in fp16 under ONNX
+Runtime is bit-exact. Under TensorRT in fp16, agreement falls to
+$93.4$--$97.9\%$ with a mean difference of up to $5.3\times10^{-2}$.
+
 \section{Discussion}
 
 \paragraph{When the engine wins, and when it does not.} TensorRT is not
@@ -618,8 +691,9 @@ confound. Parity is measured against native Triton of the same kernel, which
 isolates the plumbing from the arithmetic but does not certify the kernel itself
 against a reference implementation.
 
-\paragraph{External validity.} The evaluation is single-GPU, single-vendor,
-single-driver, and fp32/fp16/bf16/FP8/INT4 on Blackwell. The absolute numbers do
+\paragraph{External validity.} The evaluation spans two architectures (Blackwell
+consumer and Ampere datacenter) but a single vendor, a single driver per
+architecture, and fp32/fp16/bf16/FP8/INT4 on Blackwell. The absolute numbers do
 not transfer to other GPUs or to distributed serving, and the "engine wins on
 prefill" conclusion is specific to the shapes tested.
 
@@ -640,6 +714,23 @@ table); CUDA-graph capture of the launch sequence; channel-last formats for
 non-pointwise kernels; distributed execution with embedded NCCL handles; and a
 Blackwell backend (cluster-launch descriptors, \texttt{cp.async.bulk}, NVFP4).
 
+\paragraph{Engine coverage beyond ONNX.}
+The recovered contract is engine-agnostic: it describes how a compiled Triton
+kernel maps onto an engine's tensors, and only the injection step is
+engine-specific. TensorRT-LLM is the natural next target, being the standard
+way to serve LLMs on NVIDIA hardware. Its plugins \emph{are} TensorRT plugins
+--- the same \texttt{IPluginV2DynamicExt} and \texttt{IPluginCreator}
+interfaces generated here --- so the plugin generator carries over almost
+unchanged, and TensorRT-LLM ships no automatic plugin generator of its own. The
+work is consequently in the graph injection rather than the plugin:
+TensorRT-LLM builds its engine from a checkpoint or from its own module API
+rather than from an arbitrary ONNX graph, so the rewriting pass has no direct
+equivalent and a new injection point is required. The reachable scope is
+non-attention kernels --- normalisations, activations, fused elementwise ---
+because TensorRT-LLM's attention plugin owns the paged KV cache, the
+grouped-query mapping and in-flight batching, a contract a user kernel cannot
+re-enter without reimplementing it.
+
 \section{Conclusion}
 
 A compiled Triton kernel is a self-contained artifact, but the interface between
@@ -647,8 +738,8 @@ it and a C++ engine is implicit. We showed that the interface can be recovered
 automatically---the PTX entry signature, the symbolic launch grid, and the
 argument taxonomy---and re-established as native TensorRT and ONNX Runtime
 operators injected into the graph. The composition is exact on the research
-kernels and fourteen module patterns, it replaces roughly $1{,}300$ lines of
-hand-written C++ per kernel with two Python calls, and it pays off: keeping the
+kernels and fourteen module patterns, it replaces $1{,}137$ lines of
+hand-written C++ per kernel with nine lines of Python, and it pays off: keeping the
 kernel while letting the engine fold the rest is $1.99\times$ faster than the
 folded-only formulation and $1.08\times$ faster than the unfused kernel path.
 

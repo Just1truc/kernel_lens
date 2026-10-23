@@ -70,7 +70,7 @@ or in-place by static AST analysis, including through nested helper functions.
 Re-establishing the interface \emph{inside} the ONNX graph lets the engine keep
 its graph optimisations around the plugin. The result replaces $1{,}137$~lines
 of hand-written C++ --- measured, not estimated, on one fused RMSNorm kernel
-built for both backends --- with two Python calls. On an
+built for both backends --- with nine lines of Python. On an
 RTX~5060~Ti, KernelLens reproduces native Triton exactly on ten research
 workloads and fourteen module patterns, and on a block whose attention is a
 custom squared-ReLU flash kernel it is $1.99\times$ faster than the folded-only
@@ -384,9 +384,10 @@ engines.
 \paragraph{With KernelLens.} Listing~\ref{lst:kl} is the entire deployment. The
 kernel and module are the ones the user already wrote.
 
-\begin{lstlisting}[caption={The KernelLens side: two calls.},label={lst:kl},language=Python]
+\begin{lstlisting}[caption={The KernelLens side: the entire deployment, nine lines.},label={lst:kl},language=Python]
 import kernel_lens as kl
 
+# the Triton kernel + module you already wrote
 compiled = kl.compile(
     RMSNorm(4096).cuda(), (x,),
     name="llama3_rmsnorm",
@@ -427,7 +428,7 @@ class RmsnormPluginCreator : public nvinfer1::IPluginCreator { /* ... */ };
 \end{lstlisting}
 
 \paragraph{Measured volume.} Table~\ref{tab:loc} counts the generated artifacts
-for this one kernel, compiled for both backends. It is $\approx 1{,}329$ lines of
+for this one kernel, compiled for both backends. It is $1{,}137$ lines of
 C++ across six files---before CMake, the FX-graph patch, or the engine-driving
 code.
 
@@ -436,13 +437,13 @@ code.
 \begin{tabular}{l r l}
 \toprule
 \textbf{Artifact} & \textbf{Lines} & \textbf{Author} \\ \midrule
-\texttt{ort\_plugins/<kernel>Op.cu} & 909 & hand, without KernelLens \\
-\texttt{ort\_plugins/<kernel>Op.h} & 63 & hand \\
+\texttt{ort\_plugins/<kernel>Op.cu} & 686 & hand, without KernelLens \\
+\texttt{ort\_plugins/<kernel>Op.h} & 60 & hand \\
 \texttt{ort\_plugins/register\_ops.cpp} & 25 & hand \\
-\texttt{trt\_plugins/<kernel>Plugin.h} & 112 & hand \\
-\texttt{trt\_plugins/<kernel>Plugin.cu} & $\approx$300 & hand \\
-\texttt{trt\_plugins/register\_plugins.cpp} & $\approx$30 & hand \\ \midrule
-\textbf{Total, one kernel} & $\mathbf{\approx 1{,}329}$ & \textbf{KernelLens: 0} \\
+\texttt{trt\_plugins/<kernel>Plugin.h} & 113 & hand \\
+\texttt{trt\_plugins/<kernel>Plugin.cu} & 230 & hand \\
+\texttt{trt\_plugins/register\_plugins.cpp} & 23 & hand \\ \midrule
+\textbf{Total, one kernel} & $\mathbf{1{,}137}$ & \textbf{KernelLens: 0} \\
 \bottomrule
 \end{tabular}
 \captionof{table}{Generated C++ volume for a single fused RMSNorm kernel, both backends,
@@ -735,7 +736,7 @@ automatically---the PTX entry signature, the symbolic launch grid, and the
 argument taxonomy---and re-established as native TensorRT and ONNX Runtime
 operators injected into the graph. The composition is exact on the research
 kernels and fourteen module patterns, it replaces $1{,}137$ lines of
-hand-written C++ per kernel with two Python calls, and it pays off: keeping the
+hand-written C++ per kernel with nine lines of Python, and it pays off: keeping the
 kernel while letting the engine fold the rest is $1.99\times$ faster than the
 folded-only formulation and $1.08\times$ faster than the unfused kernel path.
 

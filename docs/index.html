@@ -46,7 +46,7 @@
 
   <header class="hero" id="top">
     <div>
-      <span class="kicker"><i></i>v1.1.9 · research release</span>
+      <span class="kicker"><i></i>v1.2.1 &middot; research release</span>
       <h1>Write Triton,<br>Ship <em>C++</em></h1>
       <p class="lede">KernelLens compiles a PyTorch module with custom <code>@triton.jit</code> kernels into native ONNX Runtime and TensorRT C++ plugins. The engine <em>folds</em> your standard layers; your kernels stay kernels for the operations folding cannot express.</p>
       <div class="cta">
@@ -72,32 +72,32 @@
         <g class="node" tabindex="0" data-t="Trace"
            data-d="The model runs on the GPU once while Triton's launcher is patched, capturing the compiled PTX, shared memory, warps, the real grid and every argument's shape and strides. A symbolic pass recovers the grid expression; a static AST scan classifies each argument as input, output or in-place.">
           <rect x="16" y="8" width="488" height="70" rx="12" style="fill:var(--card);stroke:var(--line)"/>
-          <rect x="16" y="8" width="6" height="70" rx="3" style="fill:var(--brand)"/>
-          <text class="t" x="38" y="36">1 · Trace</text>
+          <rect x="16" y="8" width="6" height="70" rx="3" style="fill:var(--s1)"/>
+          <text class="t" x="38" y="36" style="fill:var(--s1)">1 · Trace</text>
           <text class="s" x="38" y="58">PTX · shared memory · dynamic grid · arg taxonomy</text>
         </g>
         <line x1="260" y1="78" x2="260" y2="94" style="stroke:var(--line)" stroke-width="2" marker-end="url(#ah)"/>
         <g class="node" tabindex="0" data-t="Rewrite the graph"
            data-d="torch.onnx.export runs with Triton calls replaced by triton_custom nodes carrying the PTX and the argument taxonomy. Per-call scalars become CPU inputs; in-place buffers are wired input-to-output so the optimiser sees the mutation.">
           <rect x="16" y="96" width="488" height="70" rx="12" style="fill:var(--card);stroke:var(--line)"/>
-          <rect x="16" y="96" width="6" height="70" rx="3" style="fill:var(--brand-2, var(--brand))"/>
-          <text class="t" x="38" y="124">2 · Rewrite the graph</text>
+          <rect x="16" y="96" width="6" height="70" rx="3" style="fill:var(--s2)"/>
+          <text class="t" x="38" y="124" style="fill:var(--s2)">2 · Rewrite the graph</text>
           <text class="s" x="38" y="146">triton_custom nodes · CPU scalars · in-place aliasing</text>
         </g>
         <line x1="260" y1="166" x2="260" y2="182" style="stroke:var(--line)" stroke-width="2" marker-end="url(#ah)"/>
         <g class="node" tabindex="0" data-t="Synthesize the plugins"
            data-d="KernelLens emits an OrtCustomOp class and a nvinfer1::IPluginV2DynamicExt + IPluginCreator, rebuilds the PTX entry-slot argument array, and evaluates the launch grid in C++ over the runtime dimensions.">
           <rect x="16" y="184" width="488" height="70" rx="12" style="fill:var(--card);stroke:var(--line)"/>
-          <rect x="16" y="184" width="6" height="70" rx="3" style="fill:var(--brand)"/>
-          <text class="t" x="38" y="212">3 · Synthesize the plugins</text>
+          <rect x="16" y="184" width="6" height="70" rx="3" style="fill:var(--s3)"/>
+          <text class="t" x="38" y="212" style="fill:var(--s3)">3 · Synthesize the plugins</text>
           <text class="s" x="38" y="234">OrtCustomOp · IPluginV2DynamicExt · PTX ABI · grid</text>
         </g>
         <line x1="260" y1="254" x2="260" y2="270" style="stroke:var(--line)" stroke-width="2" marker-end="url(#ah)"/>
         <g class="node" tabindex="0" data-t="Build and run"
            data-d="nvcc and g++ produce the shared libraries; the TensorRT engine is built once and cached. At run time, PyTorch's data_ptr() addresses are handed straight to the engine — IOBinding for ONNX Runtime, set_tensor_address for TensorRT — with no host staging copies.">
           <rect x="16" y="272" width="488" height="70" rx="12" style="fill:var(--card);stroke:var(--line)"/>
-          <rect x="16" y="272" width="6" height="70" rx="3" style="fill:var(--brand-2, var(--brand))"/>
-          <text class="t" x="38" y="300">4 · Build &amp; run</text>
+          <rect x="16" y="272" width="6" height="70" rx="3" style="fill:var(--s4)"/>
+          <text class="t" x="38" y="300" style="fill:var(--s4)">4 · Build &amp; run</text>
           <text class="s" x="38" y="322">nvcc / g++ → .so · zero-copy binding</text>
         </g>
       </svg>
@@ -229,7 +229,7 @@ out_trt = compiled.run((x,), backend="tensorrt")        # run in TensorRT</code>
 
   <section id="code" style="--dot: var(--s2)">
     <span class="tag" style="--dot: var(--s2)">The code you don't write</span>
-    <h2>Nine lines of Python, or eleven hundred lines of C++.</h2>
+    <h2>Nine lines of Python, or 1,137 lines of C++.</h2>
     <p>The same thing — one Triton kernel running as a native operator in ONNX Runtime and TensorRT — from either side. On the left is everything the user writes. On the right is what KernelLens generates, and what you would otherwise write and maintain by hand.</p>
     <div class="grid2 cmp">
       <div class="rv">
@@ -270,7 +270,7 @@ class RmsnormPluginCreator : public nvinfer1::IPluginCreator { /* ... */ };
 // 5. a PyTorch C++ extension that patches the FX graph
 // 6. drive the engines: Ort::Session + RunWithBindings,
 //    IExecutionContext + setTensorAddress + enqueue</code></pre>
-        <p class="note">≈ <b>1,329 lines</b> of generated C++ across 6 files for this one kernel — before CMake, the FX-graph patch, or the engine-driving code.</p>
+        <p class="note">1,137 lines of generated C++ across 6 files for this one kernel — before CMake, the FX-graph patch, or the engine-driving code.</p>
       </div>
     </div>
     <div class="viz">
@@ -295,7 +295,6 @@ class RmsnormPluginCreator : public nvinfer1::IPluginCreator { /* ... */ };
     </div><div class="vval">23</div></div>
     <div class="vnote">KernelLens writes all of it. The user writes <b>nine lines of Python</b>. Measured with <code>tests/measure_codegen.py</code> on one fused RMSNorm kernel built for both backends.</div>
     </div>
-    <p class="note">Measured with <code>tests/measure_codegen.py</code> on a single fused RMSNorm kernel compiled for both backends.</p>
   </section>
 
   <section id="results" style="--dot: var(--s4)">
