@@ -50,6 +50,12 @@ compiled_model.run(inputs, backend="onnx"|"tensorrt")
 - **Dynamic grids in C++** — launch-grid expressions are transpiled to C++
   integer math over runtime shapes, so one plugin serves dynamic batch and
   sequence lengths.
+- **Shape-generic engines** — `kl.compile(..., dynamic_shapes=True)` exports the
+  leading dimension as a symbolic axis, so a single engine serves any size in a
+  declared range via a TensorRT optimization profile. Verified on Blackwell
+  (`sm_120a`) and Ampere (`sm_80`): one compile at batch 8 serving batches
+  1-16, bit-exact on both engines. Off by default, because a shape-specialised
+  engine is what the published benchmarks measure.
 - **Zero-copy VRAM binding** — PyTorch `data_ptr()` values are registered
   directly with each engine; no host staging copies.
 - **Blackwell PTX ISA clamping** — a Triton-generated `.version 9.3` header is
@@ -132,6 +138,13 @@ compiled = kl.compile(RMSNorm(4096).cuda(), (x,), name="llama3_rmsnorm",
                       backends=["onnx", "tensorrt"])
 out_ort = compiled.run((x,), backend="onnx")
 out_trt = compiled.run((x,), backend="tensorrt")
+
+# One engine for any batch: mark the leading dim dynamic. dynamic_max bounds
+# the optimization profile (default 4x the traced size).
+serving = kl.compile(RMSNorm(4096).cuda(), (x,), name="llama3_rmsnorm_dyn",
+                     backends=["onnx", "tensorrt"], dynamic_shapes=True)
+for b in (1, 2, 4, 8, 16):                 # all through the engine built at b=4
+    serving.run((torch.randn(b, 512, 4096, device="cuda"),), backend="tensorrt")
 ```
 
 ## Results at a glance
@@ -147,6 +160,16 @@ and every raw JSON are on the
 **The code you don't write.** The deployment is **nine lines of Python**; the C++
 it replaces is **1,137 lines across six files** for one fused RMSNorm kernel on
 both backends, measured with `tests/measure_codegen.py`.
+
+**One engine, many shapes.** With `dynamic_shapes=True` a single compiled engine
+serves any leading-dimension size in range. Measured with
+`tests/test_conformance.py`, which compiles once and then runs every shape through
+that engine — `0.00e+00` on both backends, on Blackwell and on Ampere:
+
+| Case | Compiled at | Served |
+| :--- | :--- | :--- |
+| `dynamic_batch_sweep` | batch 8 | batches 1, 2, 4, 8, 16 |
+| `dynamic_grid_sweep` | 524,288 elements | 65,536 / 131,072 / 524,288 / 1,048,576 |
 
 **Real pretrained models.** Every decoder `LayerNorm` of a real OPT checkpoint
 (125M → 6.7B) replaced by the Triton RMSNorm kernel, graded against

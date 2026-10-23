@@ -159,26 +159,17 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
         fn_match = re.search(r'\.entry\s+([a-zA-Z0-9_]+)', manifest.ptx)
         ptx_entry_name = fn_match.group(1) if fn_match else manifest.kernel_name
         
-        # --- ROBUST GRID EVALUATION WITH GENERIC REGEX SUBSTITUTION ---
-        grid_strs = []
-        if hasattr(manifest, '_sym_grid_asts') and manifest._sym_grid_asts:
-            for g in manifest._sym_grid_asts:
-                expr = str(g.node.expr) if hasattr(g, 'node') else str(g)
-                expr = re.sub(r'([a-zA-Z0-9_]+)\*\*([a-zA-Z0-9_]+)', r'std::pow(\1, \2)', expr)
-                expr = expr.replace("//", "/")
-                expr = re.sub(r'floor\((.*?)\)', r'(\1)', expr)
-                
-                # Replace any s(\d+) symbol dynamically using regex
-                expr = re.sub(r'\bs(\d+)\b', r"(int64_t)(dim_values.size() > \1 ? dim_values[\1] : 1)", expr)
-                grid_strs.append(expr)
-                
+        # --- GRID EVALUATION, from the manifest's own symbol translation ---
+        grid_strs = manifest.grid_exprs(
+            lambda i: f"(int64_t)(dim_values.size() > {i} ? dim_values[{i}] : 1)"
+        )
         while len(grid_strs) < 3:
             grid_strs.append("1")
             
         grid_eval_lines = [
             f"unsigned int grid_x = std::max(1u, (unsigned int)({grid_strs[0]}));",
             f"unsigned int grid_y = std::max(1u, (unsigned int)({grid_strs[1]}));",
-            f"unsigned int grid_z = std::max(1u, (unsigned int)({grid_strs[2]}));"
+            f"unsigned int grid_z = std::max(1u, (unsigned int)({grid_strs[2]}));",
         ]
 
         entry_match = re.search(r'\.entry\s+[a-zA-Z0-9_]+\s*\((.*?)\)\s*(?:\.reqntid|\{)', manifest.ptx, re.DOTALL)
@@ -219,6 +210,23 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
             
             ptx_ordered_slots.append({"type": c_type, "ident": str(param_num), "is_ptr": is_ptr, "decl": p_decl, "param_num": param_num})
 
+        # The node's inputs, in the order ONNX Runtime presents them. This is
+        # the same list GetInputTypeCount() reports, so indexing into it is
+        # authoritative. A running counter over manifest.arguments is not: any
+        # drift between the two silently points a scalar read at the wrong
+        # slot, and the kernel then masks against a garbage element count.
+        inputs_to_node = [
+            a for a in manifest.arguments
+            if (a.kind in ('input', 'inplace')
+                or (a.kind == 'scalar' and not getattr(a, 'is_constexpr', False)))
+        ]
+
+        def _node_input_index(a, fallback):
+            for k, cand in enumerate(inputs_to_node):
+                if cand is a:
+                    return k
+            return fallback
+
         arg_setup_lines.append("// Extract inputs/outputs/scalars from ORT context")
         onnx_input_counter = 0
         ort_output_counter = 0
@@ -231,7 +239,7 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
                     if _esz == 0.5
                     else f"(in_tensor_{slot_idx}.GetTensorTypeAndShapeInfo().GetElementCount() * {int(_esz)})"
                 )
-                arg_setup_lines.append(f"auto in_tensor_{slot_idx} = ctx.GetInput({onnx_input_counter});")
+                arg_setup_lines.append(f"auto in_tensor_{slot_idx} = ctx.GetInput({_node_input_index(arg, onnx_input_counter)});")
                 arg_setup_lines.append(f"static thread_local const void* arg_ptr_{slot_idx};")
                 arg_setup_lines.append(f"const void* raw_ptr_{slot_idx} = (const void*)in_tensor_{slot_idx}.GetTensorData<uint8_t>();")
                 arg_setup_lines.append(f"static thread_local void* align_buf_{slot_idx} = nullptr;")
@@ -274,7 +282,7 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
                         out_dim_exprs.append(f"(int64_t)(dim_values.size() > {dim_idx} ? dim_values[{dim_idx}] : 1)")
                 out_shape_str = "{" + ", ".join(out_dim_exprs) + "}" if out_dim_exprs else "dim_values"
                 
-                arg_setup_lines.append(f"auto in_tensor_{slot_idx} = ctx.GetInput({onnx_input_counter});")
+                arg_setup_lines.append(f"auto in_tensor_{slot_idx} = ctx.GetInput({_node_input_index(arg, onnx_input_counter)});")
                 arg_setup_lines.append(f"std::vector<int64_t> out_dims_{ort_output_counter} = {out_shape_str};")
                 arg_setup_lines.append(f"auto out_tensor_{slot_idx} = ctx.GetOutput({ort_output_counter}, out_dims_{ort_output_counter}.data(), out_dims_{ort_output_counter}.size());")
                 _esz = element_size_bytes(arg.dtype)
@@ -292,16 +300,33 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
                 onnx_input_counter += 1
                 ort_output_counter += 1
             elif arg.kind == 'scalar':
-                if not getattr(arg, 'is_constexpr', False):
-                    arg_setup_lines.append(f"auto scalar_tensor_{slot_idx} = ctx.GetInput({onnx_input_counter});")
+                expr = getattr(arg, 'cxx_expr', '') or ''
+                if 'dim_values' in expr:
+                    # Shape-derived (n = x.numel()): compute it from the tensor
+                    # being run. The exported graph folds this scalar into a
+                    # constant -- it is not a graph input -- so reading the slot
+                    # would hand the kernel the element count captured while
+                    # tracing, and it would then process a fraction of the
+                    # tensor and leave the rest untouched.
+                    arg_setup_lines.append(f"double scalar_val_{slot_idx} = (double)({expr});")
+                    onnx_input_counter += 1
+                elif not getattr(arg, 'is_constexpr', False):
+                    arg_setup_lines.append(f"auto scalar_tensor_{slot_idx} = ctx.GetInput({_node_input_index(arg, onnx_input_counter)});")
                     arg_setup_lines.append(f"double scalar_val_{slot_idx} = 0;")
                     arg_setup_lines.append(f"if (scalar_tensor_{slot_idx}.GetTensorTypeAndShapeInfo().GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {{ scalar_val_{slot_idx} = (double)(scalar_tensor_{slot_idx}.GetTensorData<int64_t>()[0]); }}")
                     arg_setup_lines.append(f"else if (scalar_tensor_{slot_idx}.GetTensorTypeAndShapeInfo().GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {{ scalar_val_{slot_idx} = (double)(scalar_tensor_{slot_idx}.GetTensorData<int32_t>()[0]); }}")
                     arg_setup_lines.append(f"else {{ scalar_val_{slot_idx} = (double)(scalar_tensor_{slot_idx}.GetTensorData<float>()[0]); }}")
                     onnx_input_counter += 1
                 else:
-                    s_val = arg.value if getattr(arg, 'value', None) is not None else 0.0
-                    arg_setup_lines.append(f"double scalar_val_{slot_idx} = {s_val};")
+                    # Prefer the manifest's translated expression: for a scalar
+                    # derived from shapes (n = x.numel()) that is a runtime read
+                    # of the input dims; otherwise it is the baked constant.
+                    expr = getattr(arg, 'cxx_expr', '') or None
+                    if expr:
+                        arg_setup_lines.append(f"double scalar_val_{slot_idx} = (double)({expr});")
+                    else:
+                        s_val = arg.value if getattr(arg, 'value', None) is not None else 0.0
+                        arg_setup_lines.append(f"double scalar_val_{slot_idx} = {s_val};")
 
         arg_setup_lines.append("static thread_local const void* null_ptr_arg = nullptr;")
         arg_setup_lines.append("static thread_local std::vector<void*> kp;")

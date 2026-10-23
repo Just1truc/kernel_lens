@@ -229,18 +229,12 @@ private:
         
         # --- LOCAL TRT GRID AST EVALUATION ---
         
-        grid_strs = []
-        if hasattr(manifest, '_sym_grid_asts') and manifest._sym_grid_asts:
-            for g in manifest._sym_grid_asts:
-                expr = str(g.node.expr) if hasattr(g, 'node') else str(g)
-                expr = re.sub(r'([a-zA-Z0-9_]+)\*\*([a-zA-Z0-9_]+)', r'std::pow(\1, \2)', expr)
-                expr = expr.replace("//", "/")
-                expr = re.sub(r'floor\((.*?)\)', r'(\1)', expr)
-                
-                # Replace any s(\d+) symbol dynamically using regex
-                expr = re.sub(r'\bs(\d+)\b', r"(int64_t)(inputDesc[0].dims.nbDims > \1 ? inputDesc[0].dims.d[\1] : 1)", expr)
-                grid_strs.append(expr)
-                
+        _trt_dim = lambda i: f"(int64_t)(inputDesc[0].dims.nbDims > {i} ? inputDesc[0].dims.d[{i}] : 1)"  # noqa: E731
+        grid_strs = manifest.grid_exprs(_trt_dim)
+        # A scalar derived from the shape (n = x.numel()) must be recomputed per
+        # enqueue from the runtime input, or the kernel masks against the traced
+        # element count and silently does half the work.
+        _scalar_exprs = manifest.scalar_exprs(_trt_dim)
         while len(grid_strs) < 3:
             grid_strs.append("1")
             
@@ -362,7 +356,7 @@ private:
                     arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_null_{slot_idx};")
             else:
                 if arg and arg.kind == 'scalar':
-                    expr = getattr(arg, 'cxx_expr', '') or f"m_{arg.name}"
+                    expr = _scalar_exprs.get(arg.name) or getattr(arg, 'cxx_expr', '') or f"m_{arg.name}"
                     scalar_ctype = "int64_t" if "64" in str(arg.dtype) else ("float" if ("float" in str(arg.dtype) or "float" in c_type or "double" in c_type) else "int32_t")
                     arg_setup_lines.append(f"static thread_local {scalar_ctype} tmp_scalar_{slot_idx}; tmp_scalar_{slot_idx} = ({scalar_ctype})({expr});")
                     arg_setup_lines.append(f"kernelParams[{slot_idx}] = (void*)&tmp_scalar_{slot_idx};")

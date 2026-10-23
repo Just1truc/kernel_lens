@@ -225,32 +225,49 @@ def run_case(name, model, make_inputs, backends=("onnx", "tensorrt")):
         return False
 
 
-def run_dynamic_guard(name, model, make_inputs, backends=("onnx",)):
-    """dynamic_shapes=True must be refused when the kernel's launch geometry was
-    frozen at trace time.
+def run_dynamic_sweep(name, model, make_inputs, compile_batch, batches, backends=("onnx", "tensorrt")):
+    """Compile once, then serve every batch size through that single engine.
 
-    Marking the batch axis dynamic makes the shapes flow, but the tracer
-    evaluates `n = x.numel()` and the Triton grid in Python, so the plugin
-    carries the traced values. Serving another batch would change the element
-    count and the grid while the plugin kept the old ones -- reading out of
-    bounds. This case pins the refusal so that limitation can never regress
-    into silently wrong numbers.
+    A shape-specialised engine cannot do this, so a bit-exact result at a batch
+    other than the compiled one is the evidence that the launch grid and the
+    shape-derived scalars really are functions of the runtime input.
+    ``compile_batch`` sits in the middle of ``batches`` so the sweep goes both
+    below and above the traced shape.
     """
     try:
-        kl.compile(model, make_inputs(), name=f"dyn_{name}",
-                   backends=list(backends), dynamic_shapes=True)
-    except RuntimeError as e:
-        msg = str(e)
-        if "launch geometry" in msg:
-            print(f"[PASS] {name:22} dynamic refused: {msg.splitlines()[1].strip()[:72]}")
-            return True
-        print(f"[FAIL] {name:22} refused for the wrong reason: {msg[:110]}")
-        return False
+        with torch.no_grad():
+            # Build each batch's inputs ONCE. Calling make_inputs twice would
+            # compare the engine against a different random tensor.
+            data = {b: make_inputs(b) for b in batches}
+            refs = {b: model(*_clone(data[b])) for b in batches}
+            cm = kl.compile(model, make_inputs(compile_batch), name=f"dyn_{name}",
+                            backends=list(backends), dynamic_shapes=True)
+            results = {}
+            for be in backends:
+                worst, bad = 0.0, None
+                for b in batches:
+                    out = cm.run(_clone(data[b]), backend=be)
+                    got = tuple(out.shape) if isinstance(out, torch.Tensor) else tuple(out[0].shape)
+                    want = tuple(refs[b].shape)
+                    if os.environ.get("KL_SWEEP_DBG"):
+                        print(f"      [sweep] {be} batch={b} got={got} want={want} "
+                              f"maxdiff={maxdiff(refs[b], out):.3e}", flush=True)
+                    if got != want:
+                        bad = f"batch {b}: shape {got} != {want}"
+                        break
+                    worst = max(worst, maxdiff(refs[b], out))
+                results[be] = (worst, bad)
+        ok = all(bad is None and v < 2e-2 for v, bad in results.values())
+        detail = " ".join(
+            f"{k}={'SHAPE ' + str(bad) if bad else f'{v:.2e}'}" for k, (v, bad) in results.items()
+        )
+        print(f"[{'PASS' if ok else 'FAIL'}] {name:22} compiled@{compile_batch} served={list(batches)} {detail}")
+        return ok
     except Exception as e:
-        print(f"[FAIL] {name:22} {type(e).__name__}: {str(e)[:110]}")
+        print(f"[ERROR] {name:22} {type(e).__name__}: {str(e)[:180]}")
+        if os.environ.get("KL_TRACE"):
+            traceback.print_exc()
         return False
-    print(f"[FAIL] {name:22} dynamic_shapes accepted a frozen launch geometry")
-    return False
 
 
 def main():
@@ -282,16 +299,18 @@ def main():
     # a function of the input dims. For these kernels it is evaluated while
     # tracing, so the compiler must refuse rather than serve a wrong batch.
     dynamic_cases = [
-        ("dynamic_batch_guard", TwoKernels(), lambda: (f32(8, 512), f32(8, 512)), ("onnx",)),
-        ("dynamic_grid_guard", SameKernelTwice(), lambda: (f32(2048),), ("onnx",)),
+        ("dynamic_batch_sweep", TwoKernels(),
+         lambda b: (f32(b, 512), f32(b, 512)), 8, (1, 2, 4, 8, 16), ("onnx", "tensorrt")),
+        ("dynamic_grid_sweep", SameKernelTwice(),
+         lambda b: (f32(b * 256),), 2048, (256, 512, 2048, 4096), ("onnx", "tensorrt")),
     ]
 
     results = []
     for name, model, mk, backs in cases:
         results.append((name, run_case(name, model.cuda().eval(), mk, backends=backs)))
 
-    for name, model, mk, backs in dynamic_cases:
-        results.append((name, run_dynamic_guard(name, model.cuda().eval(), mk, backends=backs)))
+    for name, model, mk, cb, bs, backs in dynamic_cases:
+        results.append((name, run_dynamic_sweep(name, model.cuda().eval(), mk, cb, bs, backends=backs)))
 
     npass = sum(1 for _, ok in results if ok)
     print(f"\n=== {npass}/{len(results)} conformance cases passed ===")

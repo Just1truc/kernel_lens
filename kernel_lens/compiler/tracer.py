@@ -13,6 +13,24 @@ from .manifest import KernelManifest, ArgumentDef
 # Global storage for the context manager
 _CAPTURED_MANIFESTS: List[KernelManifest] = []
 
+# Triton renders argument specialisations in its cache key like
+# "[('*fp32', 'D'), ('*bf16', 'D'), ('i32', 'D'), ('constexpr', 128)]".
+# We need those markers to pick the compiled variant that belongs to the launch
+# we are tracing.
+_TRITON_DTYPE_MARK = {
+    torch.float64: "*fp64",
+    torch.float32: "*fp32",
+    torch.float16: "*fp16",
+    torch.bfloat16: "*bf16",
+    torch.int64: "*i64",
+    torch.int32: "*i32",
+    torch.int16: "*i16",
+    torch.int8: "*i8",
+    torch.uint8: "*u8",
+    torch.bool: "*i1",
+}
+
+
 class TritonSymIntTracingContext:
     """
     Context manager that patches Triton JIT invocation mechanics
@@ -74,11 +92,19 @@ class TritonSymIntTracingContext:
             out_tensors = result if isinstance(result, (tuple, list)) else [result]
             
             ptx = ""
+            ptx_fallback = ""
             shared_memory_bytes = 0
             num_warps = 0
             mangled_name = jit_self.fn.__name__
             
             # --- PTX EXTRACTION ---
+            # The dtype markers this launch must match. See _TRITON_DTYPE_MARK.
+            expected_markers = []
+            for _v in bound_args.arguments.values():
+                _m = _TRITON_DTYPE_MARK.get(getattr(_v, 'dtype', None))
+                if _m and _m not in expected_markers:
+                    expected_markers.append(_m)
+
             caches = getattr(jit_self, 'cache', getattr(jit_self, 'device_caches', {}))
             constexpr_arg_indices = set()
             for key_or_dev, value in reversed(list(caches.items())):
@@ -90,6 +116,17 @@ class TritonSymIntTracingContext:
                     
                 for key_tuple, compiled in reversed(items_to_check):
                     if hasattr(compiled, 'asm') and 'ptx' in compiled.asm:
+                        # Accept only the variant compiled for this launch's
+                        # argument dtypes. Cache position is not a substitute: a
+                        # re-used entry keeps its original dict slot, so an fp32
+                        # variant compiled earlier sits *before* a bf16 one
+                        # compiled later, and reversed() then hands back the bf16
+                        # PTX for an fp32 launch -- which reads fp32 memory 16
+                        # bits at a time and covers half the tensor.
+                        if expected_markers and not all(m in str(key_tuple) for m in expected_markers):
+                            if not ptx_fallback:
+                                ptx_fallback = compiled.asm['ptx']
+                            continue
                         ptx = compiled.asm['ptx']
                         
                         if isinstance(key_tuple, str) and key_tuple.startswith('['):
@@ -151,6 +188,11 @@ class TritonSymIntTracingContext:
                     match = re.search(r'\.visible\s+\.entry\s+([a-zA-Z0-9_]+)\(', ptx)
                     if match: mangled_name = match.group(1)
                     break
+
+            if not ptx:
+                # No key matched the launch's dtypes; better a possibly-wrong
+                # variant than an empty manifest.
+                ptx = ptx_fallback
 
             # --- ABI SIGNATURE GENERATION ---
             manifest_args = []
@@ -247,6 +289,11 @@ def extract_manifests(module: torch.nn.Module, dummy_inputs: Tuple[Any, ...]) ->
                     debug_print(f"        Pass 2 (Fake): {a2.shape} <--- THIS IS THE CULPRIT")
                 
                 a1._sym_ast = a2._sym_ast
+                # Keep Pass 2's symbolic shape too: it is the only record of
+                # which dims are symbols, and the generators need that to
+                # express the grid in terms of the runtime input.
+                if getattr(a2, "shape", None):
+                    a1.sym_shape = tuple(a2.shape)
                 
             merged.append(m1)
         

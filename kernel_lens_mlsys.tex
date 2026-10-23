@@ -88,7 +88,10 @@ built for both backends --- with nine lines of Python. On an
 RTX~5060~Ti, KernelLens reproduces native Triton exactly on ten research
 workloads and fourteen module patterns, and on a block whose attention is a
 custom squared-ReLU flash kernel it is $1.99\times$ faster than the folded-only
-formulation and $1.08\times$ faster than the unfused kernel path.
+formulation and $1.08\times$ faster than the unfused kernel path. The same
+compiler also produces \emph{shape-generic} engines: a single build serves any
+leading-dimension size in a declared range, with results identical to
+shape-specialised builds on Blackwell and Ampere.
 \end{abstract}
 ]
 
@@ -298,6 +301,18 @@ fake tensors, so the grid lambda evaluates over \texttt{SymInt} sizes. The
 resulting expression---for example \texttt{(s0*s1+127)//128}---is captured as a
 string for later transpilation. If this pass diverges from Pass~1, the concrete
 manifests are used unchanged, which keeps compilation deterministic.
+
+This pass is also what makes a shape-generic engine possible at all. Pass~1 alone
+can only ever yield the grid for the traced shape; it is Pass~2's symbolic
+expression that lets the generated plugin evaluate the grid at inference time from
+whatever shape arrives. One subtlety cost us a long time and is worth stating,
+because it is invisible: a \texttt{SymInt} carries two accessors.
+\texttt{node.expr} applies the shape environment's recorded substitutions and
+returns the \emph{collapsed constant}---for a traced \texttt{(8, 512)} input,
+\texttt{(s0*s1+255)//256} evaluates to \texttt{16}---while \texttt{node.\_expr}
+still holds the symbol. Reading \texttt{.expr} therefore silently freezes the
+grid at the traced shape. It is the correct answer for a shape-specialised
+engine, which is exactly why it went unnoticed: every static result was right.
 
 \subsection{Pass 3: the argument taxonomy}
 
@@ -684,6 +699,64 @@ retains the same argmax on at least $98.8\%$ of positions and the mean absolute
 logit difference stays below $6.3\times10^{-3}$; OPT-350M in fp16 under ONNX
 Runtime is bit-exact. Under TensorRT in fp16, agreement falls to
 $93.4$--$97.9\%$ with a mean difference of up to $5.3\times10^{-2}$.
+
+\subsection{Shape-generic engines}
+\label{sec:dynamic}
+
+Everything above measures a shape-specialised engine: compiled for one shape,
+fastest at that shape. The same plugin machinery supports the opposite
+trade-off, and TensorRT is not the obstacle---\texttt{IPluginV2DynamicExt}, the
+interface we emit, exists precisely for plugins inside dynamic-shape engines, and
+the optimization-profile API is standard.
+
+\texttt{kl.compile(..., dynamic\_shapes=True)} exports the leading dimension as a
+symbolic axis, which makes the network carry a \texttt{-1} dim and the profile
+apply. The generated plugins then evaluate their launch grid and their
+shape-derived scalars from the tensor at run time rather than from the traced
+shape. \texttt{dynamic\_max} bounds the profile; it defaults to $4\times$ the
+traced size, because TensorRT compiles kernels spanning \texttt{min}$\ldots$\texttt{max}
+and a needlessly wide range costs build time and can cost per-shape performance.
+
+Table~\ref{tab:dynamic} reports the two conformance cases that exercise the
+capability rather than assuming it: each compiles once and then runs every shape
+through that single engine, on both backends.
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{l l l r}
+\toprule
+\textbf{Case} & \textbf{Compiled at} & \textbf{Served} & \textbf{Max diff} \\ \midrule
+\texttt{dynamic\_batch\_sweep} & batch 8 & 1, 2, 4, 8, 16 & \texttt{0.00e+00} \\
+\texttt{dynamic\_grid\_sweep} & 524{,}288 & 65{,}536 \ldots 1{,}048{,}576 & \texttt{0.00e+00} \\
+\bottomrule
+\end{tabular}
+\caption{One engine per row, serving every shape listed, bit-exact
+against native Triton on both ONNX Runtime and TensorRT, on an RTX~5060~Ti
+(\texttt{sm\_120a}) and an A100-SXM4-80GB (\texttt{sm\_80}).}
+\label{tab:dynamic}
+\end{table*}
+
+Two defects had to be fixed for this to work, and both are instructive because
+neither is visible under shape specialisation. The first is the accessor pitfall
+described in Section~\ref{sec:contract}: reading \texttt{.expr} instead of
+\texttt{.\_expr} collapses the symbolic grid to the traced constant. The second
+is in how the plugin's PTX is obtained. We recover it by walking Triton's compile
+cache, which holds one variant per argument specialisation, keyed by the argument
+types:
+
+\begin{center}
+\small
+\texttt{[('*fp32', 'D'), ..., ('constexpr', 128)]}
+\end{center}
+
+Selecting a variant by cache position rather than by that key is wrong, because a
+re-used entry keeps its original slot: an \texttt{fp32} variant compiled early
+sits \emph{before} a \texttt{bf16} one compiled later, and the \texttt{fp32}
+launch is then handed the \texttt{bf16} PTX. That kernel reads \texttt{fp32}
+memory 16~bits at a time and silently covers half the tensor---correct at the
+traced shape, and wrong everywhere else. Matching the variant against the launch's
+own argument types fixes it.
 
 \section{Discussion}
 

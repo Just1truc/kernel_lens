@@ -418,6 +418,15 @@ class RmsnormPluginCreator : public nvinfer1::IPluginCreator { /* ... */ };
     </figure>
 
     <p class="note"><b>The result splits by precision.</b> In <b>fp32</b>, <code>torch.compile</code> barely beats eager (1.02&ndash;1.12&times;) because it leaves the operators around the kernel unfused, while KernelLens fuses them: <b>3.2&ndash;5.5&times; faster</b>, growing with model size. In <b>fp16</b>, <code>torch.compile</code> optimises well and KernelLens only matches it &mdash; TensorRT edges it by 1.06&ndash;1.22&times;, and ONNX Runtime is <b>slower</b> (0.67&ndash;0.84&times;). Keeping kernels pays when the baseline leaves the graph unfused; when it already fuses, we break even. Accuracy tracks precision rather than speed: fp32 holds the same greedy token on &ge;98.8% of positions, fp16 under TensorRT on 93.4&ndash;97.9%, and OPT-350M in fp16 under ORT is bit-exact.</p>
+      <h3 style="margin-top:38px">One engine, many shapes</h3>
+    <p class="note"><code>kl.compile(..., dynamic_shapes=True)</code> exports the leading dimension as a symbolic axis, so a single engine serves any size in a declared range — instead of one engine per shape.</p>
+    <div class="viz">
+      <div class="vizh"><span><b>Compile once, serve every shape</b> &middot; maximum absolute difference versus native Triton</span><span><i class="vdot" style="--c:var(--c-kl)"></i>ONNX Runtime &nbsp; <i class="vdot" style="--c:var(--c-trt)"></i>TensorRT</span></div>
+      <div class="vrow win"><div class="vlab">compiled at batch 8<small>then served batches 1, 2, 4, 8 and 16 through that engine</small></div><div class="vtrack"></div><div class="vval">0.00e+00</div></div>
+      <div class="vrow win"><div class="vlab">compiled at 524,288 elements<small>then served 65,536 &middot; 131,072 &middot; 524,288 &middot; 1,048,576</small></div><div class="vtrack"></div><div class="vval">0.00e+00</div></div>
+      <div class="vrow win"><div class="vlab">two architectures<small>Blackwell <code>sm_120a</code> and Ampere <code>sm_80</code>, 16/16 conformance on each</small></div><div class="vtrack"></div><div class="vval">16/16</div></div>
+      <div class="vnote">Measured with <code>tests/test_conformance.py</code>, which compiles once and then runs every shape through that one engine. Both backends, both architectures, bit-exact. Off by default, because a shape-specialised engine is what the benchmarks above measure.</div>
+    </div>
   </section>
 
   <section id="why" style="--dot: var(--s6)">

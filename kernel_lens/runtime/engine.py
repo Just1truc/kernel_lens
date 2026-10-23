@@ -89,7 +89,7 @@ def _deserialize_engine(trt, runtime, engine_path):
 
 
 class CompiledModel:
-    def __init__(self, cache_dir: str, model_name: str, backends: list[str], output_shapes: list = None, output_strides: list = None, output_dtypes: list = None, saved_args: list = None, dynamic_shapes: bool = False, dynamic_max: int = None, input_shapes: list = None):
+    def __init__(self, cache_dir: str, model_name: str, backends: list[str], output_shapes: list = None, output_strides: list = None, output_dtypes: list = None, saved_args: list = None, dynamic_shapes: bool = False, dynamic_max: int = None, input_shapes: list = None, scalar_specs: list = None):
         """
         Represents a compiled PyTorch model ready for deployment.
         """
@@ -107,6 +107,9 @@ class CompiledModel:
         # engine first: deriving it from the first run turns `max` into
         # first_batch*4 and the engine then refuses everything above it.
         self.input_shapes = [tuple(s) for s in input_shapes] if input_shapes else None
+        # Scalars that follow the input shape. The traced values are wrong for
+        # any other shape, so recompute them from the live one.
+        self.scalar_specs = list(scalar_specs) if scalar_specs else []
         self._ort_session = None
 
     def run(self, inputs: tuple, backend: str = "onnx"):
@@ -212,6 +215,60 @@ class CompiledModel:
     #     self._ort_session.run_with_iobinding(self._ort_io_binding)
         
     #     return torch_outputs
+    def _recomputed_scalar_map(self, inputs):
+        """{traced value: value for these shapes} for shape-derived scalars.
+
+        Keyed on the traced value so a graph input slot can be identified
+        without relying on ordering.
+        """
+        vals = self._runtime_scalar_values(inputs)
+        if vals is None:
+            return None
+        out = {}
+        for spec, val in zip(self.scalar_specs, vals):
+            if spec.get("traced") is not None:
+                out[float(spec["traced"])] = val
+        return out
+
+    @staticmethod
+    def _slot_value(obj):
+        """First element of a saved scalar slot, as a float, or None."""
+        try:
+            if isinstance(obj, torch.Tensor):
+                return float(obj.flatten()[0].item())
+            if isinstance(obj, (int, float)):
+                return float(obj)
+        except Exception:
+            return None
+        return None
+
+    def _runtime_scalar_values(self, inputs):
+        """Recompute shape-derived scalars for these inputs.
+
+        Returns a list aligned with `self.scalar_specs`, or None when there is
+        nothing to recompute or the shapes do not match what was traced.
+        """
+        if not self.scalar_specs:
+            return None
+        shapes = [tuple(t.shape) for t in inputs if isinstance(t, torch.Tensor)]
+        if not shapes:
+            return None
+        first = shapes[0]
+        out = []
+        for spec in self.scalar_specs:
+            env = {}
+            for sym, dim in (spec.get("sym_dims") or {}).items():
+                if dim >= len(first):
+                    return None
+                env[sym] = int(first[dim])
+            try:
+                val = eval(compile(spec["expr"], "<shape_scalar>", "eval"),  # noqa: S307
+                           {"__builtins__": {}}, env)
+            except Exception:
+                return None
+            out.append(float(val) if spec.get("is_float") else int(val))
+        return out
+
     def _resolve_ort_output_shape(self, i, sess_out, trt_inputs):
         """Concrete output shape for one ORT call.
 
@@ -285,10 +342,16 @@ class CompiledModel:
             for idx, s in enumerate(session_inputs):
                 debug_print(f"  sess_in {idx}: name='{s.name}', type='{s.type}', shape={s.shape}")
 
+        runtime_scalar_map = self._recomputed_scalar_map(inputs)
         trt_inputs = []
         for i, sess_in in enumerate(session_inputs):
             if i < len(inputs):
                 inp = inputs[i]
+            elif runtime_scalar_map and self._slot_value(inp) in runtime_scalar_map:
+                val = runtime_scalar_map[self._slot_value(inp)]
+                _dt = torch.float32 if isinstance(val, float) else torch.int64
+                trt_inputs.append(torch.tensor([val], device='cpu', dtype=_dt))
+                continue
             elif self.saved_args and i < len(self.saved_args):
                 inp = self.saved_args[i]
             else:
@@ -521,6 +584,17 @@ class CompiledModel:
         raw_inputs = list(inputs)
         if self.saved_args and len(raw_inputs) < len(self.saved_args):
             raw_inputs.extend(self.saved_args[len(raw_inputs):])
+
+        # Scalars derived from the shape carry the traced value; recompute them
+        # for the shapes actually being run.
+        runtime_scalar_map = self._recomputed_scalar_map(inputs)
+        if runtime_scalar_map:
+            for j in range(len(inputs), len(raw_inputs)):
+                slot = self._slot_value(raw_inputs[j])
+                if slot is not None and slot in runtime_scalar_map:
+                    val = runtime_scalar_map[slot]
+                    _dt = torch.float32 if isinstance(val, float) else torch.int64
+                    raw_inputs[j] = torch.tensor([val], device='cpu', dtype=_dt)
 
         for inp in raw_inputs:
             if isinstance(inp, torch.Tensor):

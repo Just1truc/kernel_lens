@@ -3,95 +3,92 @@
 Notable changes to `kernel-lens`. This project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.3.0] — 2026-10-23
+
+Shape-generic engines. `kl.compile(..., dynamic_shapes=True)` produces a single
+engine that serves any leading-dimension size within a declared range, instead of
+one engine per shape.
+
+Verified on two architectures — RTX 5060 Ti (Blackwell, `sm_120a`) and
+A100-SXM4-80GB (Ampere, `sm_80`) — with one engine compiled at batch 8 serving
+batches 1, 2, 4, 8 and 16, and one compiled at 524288 elements serving
+256, 512, 2048 and 4096, bit-exact (`0.00e+00`) on both ONNX Runtime and
+TensorRT. The full conformance suite is 16/16 on both.
 
 ### Added
 
-- `kl.compile(..., dynamic_shapes=True)` marks the leading (batch) dimension of
-  every tensor input dynamic, so one engine can serve more than the traced batch
-  via a TensorRT optimization profile. Off by default: the published benchmarks
-  measure a shape-specialised engine, and turning it on would invalidate them.
+- `dynamic_shapes=True` and `dynamic_max` on `kl.compile()`. Off by default: the
+  published benchmarks measure a shape-specialised engine. `dynamic_max` bounds
+  the optimization profile (default `4x` the traced size); TensorRT builds
+  kernels spanning `min..max`, so a needlessly wide range costs build time and
+  can cost per-shape performance.
+- Two conformance cases that exercise the capability rather than assuming it:
+  `dynamic_batch_sweep` and `dynamic_grid_sweep` compile once and run every shape
+  through that single engine.
 
 ### Fixed
 
-- **Plugins baked the traced output dims.** Both generators resolved output
-  dimensions through `int(dim)`, so a dynamic graph got a plugin that reported
-  the traced batch. Only dims in `manifest.dynamic_axes` are now read from the
-  tensor at run time.
-- **The ORT runtime re-used the previous call's output buffers.** A cached
-  `IOBinding` keeps its OrtValues, and ORT rejects them once the output shape
-  moves ("pre-allocated output OrtValue ... has shape {1,512} but the computed
-  output shape for this run is {8,512}"). A dynamic graph now binds from
-  scratch per call, and resolves output shapes from the live input rather than
-  the traced output meta.
-- **TensorRT output dims were never inferred.** With a dynamic input the
-  execution context returns `-1` for the outputs until asked, and the fallback
-  handed back the *traced* shape. `infer_shapes()` now runs when the graph is
-  dynamic.
-- **The optimization profile took its `opt` from whichever call built the
-  engine first**, so a first run at batch 1 produced `max = 4` and the engine
-  then refused every batch above it. `opt` now comes from the traced shapes,
-  which are persisted alongside the rest of the compile metadata.
-- The profile's `max` was a flat `max(8192, opt*4)`, which for a *batch* dim
-  means building for a thousand-fold range. It is now `4x` the traced dim by
-  default, overridable with `dynamic_max`.
+Two independent defects, both of which had to be fixed for the feature to work.
 
-### Known limitation
+**The symbolic tracing pass was working and its output was discarded.**
+`extract_manifests()` runs a real pass and then a
+`make_fx(tracing_mode="symbolic")` pass, and merges them — Pass 2 genuinely
+captures `((s75*s96 + 255)//256)` and `shape=(s75, s96)`. But `SymNode` exposes
+two accessors and they are not the same:
 
-- `dynamic_shapes=True` is **refused** when the kernel's launch geometry was
-  frozen before it reached the plugin. Verified by logging on the GPU
-  (RTX 5060 Ti, TensorRT 10.16.1.11), with three claims tested and two of my
-  own earlier explanations disproved:
+```
+node._expr = ((s75*s96 + 255)//256)   # raw symbol, intact
+node.expr  = 16                       # shape_env.replace(), cached
+```
 
-  1. `int()` does **not** mutate the SymInt. Measured: `int(g) == 16` before and
-     after, same `id`, same expression. (My earlier "Triton's int() specialises
-     the node in place" was wrong.)
-  2. The launch does **not** mutate it either. Logging the grid around the real
-     `triton.JITFunction.run` gives the identical object, `id` and expression
-     before and after. (My "mutated in place by the launch" was wrong.)
-  3. The symbolic capture works and the merge keeps it. Replaying
-     `extract_manifests` by hand -- both passes, then the merge verbatim from
-     `tracer.py:233-253` -- yields
-     `grid elem: type=SymInt str='((s75*s96 + 255)//256)'` and
-     `scalar n: _sym_ast=s75*s96 (type SymInt)`.
+`expr` substitutes the values the shape env has recorded, so it folds the
+expression to the constant. Every consumer read `.expr`, so the launch grid and
+the shape-derived scalars were frozen at the traced shape. Note this is
+*correct* for a shape-specialised engine — which is why nothing ever broke
+before. Fixed by reading `node._expr` (via `raw_sym_expr`), carrying Pass 2's
+symbolic shapes through the merge, and giving the manifest one translation with a
+per-backend dimension accessor.
 
-  The real cause is an **accessor**, not a mutation or a lifetime problem:
+**The tracer picked the PTX for the wrong dtype.** `tracer.py` extracts the PTX
+by walking Triton's compile cache and taking the first hit:
 
-  ```
-  node._expr = ((s75*s96 + 255)//256)   # the raw expression, intact
-  node.expr  = 16                       # the public property, hint-specialised
-  node.hint  = 16
-  ```
+```python
+for key_or_dev, value in reversed(list(caches.items())):
+    for key_tuple, compiled in reversed(items_to_check):
+        if hasattr(compiled, 'asm') and 'ptx' in compiled.asm:
+            ptx = compiled.asm['ptx']
+```
 
-  `SymNode.expr` (and therefore `str(symint)`) returns the specialised constant,
-  while `_expr` keeps the symbol. Everything that consumes the symbolic value
-  reads `.expr`:
+The cache holds one variant per argument specialisation, keyed
+`"[('*fp32','D'), ..., ('constexpr',128)]"`. A re-used entry keeps its original
+dict slot, so an fp32 variant compiled earlier sits *before* a bf16 one compiled
+later and `reversed()` returns the **bf16 PTX for an fp32 launch** — which reads
+fp32 memory 16 bits at a time and silently covers half the tensor. Fixed by
+matching the variant against the launch's own argument dtypes
+(`_TRITON_DTYPE_MARK`), with a positional fallback.
 
-  - `manifest._transpile_symints_to_cxx()` keys `sym_map` on
-    `str(dim.node.expr)` -> `"16"` instead of `"s75"`, so the map never matches
-    and `grid_cxx_exprs` collapses to `['16', '1', '1']`
-  - both generators do `str(g.node.expr)` -> `"16"` -> no `s(\d+)` to
-    substitute -> the emitted C++ is
-    `unsigned int grid_x = std::max(1u, (unsigned int)(16));`
-  - the scalar keeps a SymInt but reads it through the same accessor, so the
-    plugin constructor is `m_n(4096)`
+Also fixed while wiring the feature end to end:
 
-  Behind that sits a second, independent bug worth fixing at the same time: the
-  substitution treats symbol ids as dimension indices. Applied to the surviving
-  expression it produces
-  `dims.nbDims > 75 ? dims.d[75] : 1` for `s75` on a 2-D input, so the bounds
-  guard falls back to `1` and the grid becomes one block. The manifest already
-  builds the correct mapping (expression string -> real dim index) in
-  `sym_map`, but neither generator consumes `grid_cxx_exprs`, and `cxx_expr` is
-  never read at all.
-
-  Fix: read `node._expr` (falling back to `.expr`) in `_transpile_symints_to_cxx`
-  and in both generators, consume `grid_cxx_exprs`/`cxx_expr` instead of
-  re-deriving, and make the TRT scalar members runtime -- they are currently
-  serialised, so that part touches the plugin template. Until then
-  `_check_dynamic_supported()` raises rather than returning wrong numbers or
-  reading out of bounds, and `tests/test_conformance.py` pins the refusal
-  (`dynamic_batch_guard`, `dynamic_grid_guard`).
+- `torch.onnx.export` had no `dynamic_axes`, so no `-1` ever reached the network
+  and the optimization-profile code never ran.
+- Plugins emitted `exprBuilder.constant(N)` / literal output dims from the traced
+  shape; they now read the dynamic dims from the tensor at run time.
+- TensorRT output dims were never inferred (`infer_shapes()`), so a dynamic graph
+  returned `-1` and the fallback handed back the *traced* shape.
+- The optimization profile took `opt` from whichever call happened to build the
+  engine first, giving `max = 4` when the first run was batch 1; `opt` now comes
+  from the traced shapes.
+- The ORT runtime re-used the previous call's `IOBinding`, whose OrtValues ORT
+  rejects once the output shape moves. A dynamic graph now binds per call and
+  resolves output shapes from the live input.
+- `translate_symint_to_cxx` emitted `**` as `^` — bitwise XOR in C++ — and used a
+  `re.sub` replacement string that corrupted the substitution.
+- The ORT op addressed its inputs by a running counter over `manifest.arguments`;
+  indices now come from the node's own input list, which is what
+  `GetInputTypeCount()` reports and what ORT actually presents.
+- Shape-derived scalars (`n = x.numel()`) are computed from `dim_values` in the
+  plugin and recomputed from the live shapes in the runtime, instead of being
+  baked at trace time.
 
 ## [1.2.1] — 2026-10-23
 

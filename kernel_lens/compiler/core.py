@@ -179,7 +179,6 @@ def compile(
     if dynamic_shapes:
         for m in manifests:
             m.dynamic_axes = (0,)
-        _check_dynamic_supported(manifests, inputs)
     
     # 1. Base ONNX Export (Needed by BOTH ORT and TRT)
     onnx_path = os.path.join(cache_dir, f"{name}.onnx")
@@ -217,6 +216,15 @@ def compile(
                 os.remove(engine_file)
             except Exception:
                 pass
+    # Scalars that follow the input shape (n = x.numel()) are injected into the
+    # ONNX graph as inputs. Record how to recompute them from live shapes.
+    scalar_specs = []
+    for m in manifests:
+        try:
+            scalar_specs.extend(m.shape_scalar_specs())
+        except Exception:
+            pass
+
     with torch.no_grad():
         dummy_out = model(*inputs)
     out_list = list(dummy_out) if isinstance(dummy_out, (tuple, list)) else [dummy_out]
@@ -234,13 +242,14 @@ def compile(
         torch.save(
             {"output_shapes": output_shapes, "output_strides": output_strides, "output_dtypes": output_dtypes,
              "dynamic_shapes": dynamic_shapes, "dynamic_max": dynamic_max,
-             "input_shapes": [tuple(t.shape) for t in inputs if isinstance(t, torch.Tensor)]},
+             "input_shapes": [tuple(t.shape) for t in inputs if isinstance(t, torch.Tensor)],
+             "scalar_specs": scalar_specs},
             os.path.join(cache_dir, "output_meta.pt"),
         )
     except Exception:
         pass
 
-    return CompiledModel(cache_dir, name, backends, output_shapes=output_shapes, output_strides=output_strides, output_dtypes=output_dtypes, saved_args=saved_args, dynamic_shapes=dynamic_shapes, dynamic_max=dynamic_max, input_shapes=[tuple(t.shape) for t in inputs if isinstance(t, torch.Tensor)])
+    return CompiledModel(cache_dir, name, backends, output_shapes=output_shapes, output_strides=output_strides, output_dtypes=output_dtypes, saved_args=saved_args, dynamic_shapes=dynamic_shapes, dynamic_max=dynamic_max, input_shapes=[tuple(t.shape) for t in inputs if isinstance(t, torch.Tensor)], scalar_specs=scalar_specs)
 
 def load(name: str) -> CompiledModel:
     """
@@ -286,7 +295,8 @@ def load(name: str) -> CompiledModel:
                          output_dtypes=output_meta.get("output_dtypes"),
                          dynamic_shapes=bool(output_meta.get("dynamic_shapes", False)),
                          dynamic_max=output_meta.get("dynamic_max"),
-                         input_shapes=output_meta.get("input_shapes"))
+                         input_shapes=output_meta.get("input_shapes"),
+                         scalar_specs=output_meta.get("scalar_specs"))
 
 def _dynamic_axes(export_inputs, dummy_out, out_names):
     """ONNX ``dynamic_axes`` map for a batch-dynamic export.
@@ -308,47 +318,6 @@ def _dynamic_axes(export_inputs, dummy_out, out_names):
         if isinstance(out, torch.Tensor) and out.dim() >= 1 and int(out.shape[0]) in leads:
             axes[nm] = {0: "batch"}
     return axes
-
-
-def _check_dynamic_supported(manifests, inputs):
-    """Refuse a dynamic build whose kernel logic was frozen at trace time.
-
-    Marking the batch axis dynamic makes the *shapes* flow: the graph carries a
-    symbolic dim, the optimization profile applies, and the plugins read their
-    output dims from the tensor at run time. But the tracer still evaluates
-    Triton launch grids and shape-derived scalars in Python while tracing, so a
-    kernel that computes ``n = x.numel()`` or ``grid = cdiv(n, BLOCK)`` carries
-    the traced values into the plugin. Serving another batch would then read
-    out of bounds. Better a compile-time error than wrong numbers.
-    """
-    numel = None
-    for t in inputs:
-        if isinstance(t, torch.Tensor) and t.dim() >= 1:
-            numel = t.numel()
-            break
-
-    baked = []
-    for m in manifests:
-        for a in m.arguments:
-            if a.kind == "scalar" and numel is not None and a.value == numel:
-                baked.append(f"  - {m.kernel_name}: scalar '{a.name}' is the element count ({numel})")
-        for g in (getattr(m, "_sym_grid_asts", ()) or ()):
-            expr = getattr(g, "node", g)
-            if isinstance(expr, int):
-                baked.append(f"  - {m.kernel_name}: launch grid frozen at {expr} blocks")
-
-    if baked:
-        raise RuntimeError(
-            "dynamic_shapes=True, but this kernel's launch geometry was evaluated\n"
-            "while tracing and is baked into the plugin:\n"
-            + "\n".join(baked)
-            + "\n\nA different batch size would change the element count and the grid,\n"
-            "and the plugin would keep the traced ones -- reading out of bounds.\n"
-            "Dynamic shapes need a grid and scalars that are functions of the input\n"
-            "dims, which the symbolic tracing pass does not yet produce for this\n"
-            "kernel. Compile with dynamic_shapes=False (default), or make the grid\n"
-            "and scalars depend on a runtime tensor input."
-        )
 
 
 def _export_to_onnx(model, inputs, output_path, manifests, dynamic_shapes=False):
