@@ -3,6 +3,53 @@
 Notable changes to `kernel-lens`. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `kl.compile(..., dynamic_shapes=True)` marks the leading (batch) dimension of
+  every tensor input dynamic, so one engine can serve more than the traced batch
+  via a TensorRT optimization profile. Off by default: the published benchmarks
+  measure a shape-specialised engine, and turning it on would invalidate them.
+
+### Fixed
+
+- **Plugins baked the traced output dims.** Both generators resolved output
+  dimensions through `int(dim)`, so a dynamic graph got a plugin that reported
+  the traced batch. Only dims in `manifest.dynamic_axes` are now read from the
+  tensor at run time.
+- **The ORT runtime re-used the previous call's output buffers.** A cached
+  `IOBinding` keeps its OrtValues, and ORT rejects them once the output shape
+  moves ("pre-allocated output OrtValue ... has shape {1,512} but the computed
+  output shape for this run is {8,512}"). A dynamic graph now binds from
+  scratch per call, and resolves output shapes from the live input rather than
+  the traced output meta.
+- **TensorRT output dims were never inferred.** With a dynamic input the
+  execution context returns `-1` for the outputs until asked, and the fallback
+  handed back the *traced* shape. `infer_shapes()` now runs when the graph is
+  dynamic.
+- **The optimization profile took its `opt` from whichever call built the
+  engine first**, so a first run at batch 1 produced `max = 4` and the engine
+  then refused every batch above it. `opt` now comes from the traced shapes,
+  which are persisted alongside the rest of the compile metadata.
+- The profile's `max` was a flat `max(8192, opt*4)`, which for a *batch* dim
+  means building for a thousand-fold range. It is now `4x` the traced dim by
+  default, overridable with `dynamic_max`.
+
+### Known limitation
+
+- `dynamic_shapes=True` is **refused** when the kernel's launch geometry was
+  frozen at compile time. `tracer.py` evaluates `n = x.numel()` and the Triton
+  grid in Python during tracing, so the plugin carries the traced values; a
+  different batch would change the element count and the grid while the plugin
+  kept the old ones, reading out of bounds. `_check_dynamic_supported()` raises
+  rather than returning wrong numbers. Making this work needs the symbolic
+  tracing pass to produce grid and scalar *expressions* over the input dims --
+  `_sym_grid_asts` is currently populated with the concrete evaluated grid, so
+  the substitution in the generators has nothing to substitute.
+  `tests/test_conformance.py` pins the refusal (`dynamic_batch_guard`,
+  `dynamic_grid_guard`).
+
 ## [1.2.1] — 2026-10-23
 
 Everything below comes out of the real-checkpoint evaluation on an

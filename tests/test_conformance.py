@@ -225,6 +225,34 @@ def run_case(name, model, make_inputs, backends=("onnx", "tensorrt")):
         return False
 
 
+def run_dynamic_guard(name, model, make_inputs, backends=("onnx",)):
+    """dynamic_shapes=True must be refused when the kernel's launch geometry was
+    frozen at trace time.
+
+    Marking the batch axis dynamic makes the shapes flow, but the tracer
+    evaluates `n = x.numel()` and the Triton grid in Python, so the plugin
+    carries the traced values. Serving another batch would change the element
+    count and the grid while the plugin kept the old ones -- reading out of
+    bounds. This case pins the refusal so that limitation can never regress
+    into silently wrong numbers.
+    """
+    try:
+        kl.compile(model, make_inputs(), name=f"dyn_{name}",
+                   backends=list(backends), dynamic_shapes=True)
+    except RuntimeError as e:
+        msg = str(e)
+        if "launch geometry" in msg:
+            print(f"[PASS] {name:22} dynamic refused: {msg.splitlines()[1].strip()[:72]}")
+            return True
+        print(f"[FAIL] {name:22} refused for the wrong reason: {msg[:110]}")
+        return False
+    except Exception as e:
+        print(f"[FAIL] {name:22} {type(e).__name__}: {str(e)[:110]}")
+        return False
+    print(f"[FAIL] {name:22} dynamic_shapes accepted a frozen launch geometry")
+    return False
+
+
 def main():
     torch.manual_seed(0)
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -250,9 +278,20 @@ def main():
         ("dynamic_batch", TwoKernels(), lambda: (f32(8, 512), f32(8, 512)), ("onnx", "tensorrt")),
     ]
 
+    # dynamic_shapes=True is accepted only when the kernel's launch geometry is
+    # a function of the input dims. For these kernels it is evaluated while
+    # tracing, so the compiler must refuse rather than serve a wrong batch.
+    dynamic_cases = [
+        ("dynamic_batch_guard", TwoKernels(), lambda: (f32(8, 512), f32(8, 512)), ("onnx",)),
+        ("dynamic_grid_guard", SameKernelTwice(), lambda: (f32(2048),), ("onnx",)),
+    ]
+
     results = []
     for name, model, mk, backs in cases:
         results.append((name, run_case(name, model.cuda().eval(), mk, backends=backs)))
+
+    for name, model, mk, backs in dynamic_cases:
+        results.append((name, run_dynamic_guard(name, model.cuda().eval(), mk, backends=backs)))
 
     npass = sum(1 for _, ok in results if ok)
     print(f"\n=== {npass}/{len(results)} conformance cases passed ===")

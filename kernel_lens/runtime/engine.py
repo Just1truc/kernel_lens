@@ -89,7 +89,7 @@ def _deserialize_engine(trt, runtime, engine_path):
 
 
 class CompiledModel:
-    def __init__(self, cache_dir: str, model_name: str, backends: list[str], output_shapes: list = None, output_strides: list = None, output_dtypes: list = None, saved_args: list = None):
+    def __init__(self, cache_dir: str, model_name: str, backends: list[str], output_shapes: list = None, output_strides: list = None, output_dtypes: list = None, saved_args: list = None, dynamic_shapes: bool = False, dynamic_max: int = None, input_shapes: list = None):
         """
         Represents a compiled PyTorch model ready for deployment.
         """
@@ -100,6 +100,13 @@ class CompiledModel:
         self.output_strides = output_strides
         self.output_dtypes = output_dtypes
         self.saved_args = saved_args
+        self.dynamic_shapes = dynamic_shapes
+        self.dynamic_max = dynamic_max
+        # The shapes the model was traced at. The optimization profile's `opt`
+        # must come from here, not from whichever call happens to build the
+        # engine first: deriving it from the first run turns `max` into
+        # first_batch*4 and the engine then refuses everything above it.
+        self.input_shapes = [tuple(s) for s in input_shapes] if input_shapes else None
         self._ort_session = None
 
     def run(self, inputs: tuple, backend: str = "onnx"):
@@ -205,6 +212,33 @@ class CompiledModel:
     #     self._ort_session.run_with_iobinding(self._ort_io_binding)
         
     #     return torch_outputs
+    def _resolve_ort_output_shape(self, i, sess_out, trt_inputs):
+        """Concrete output shape for one ORT call.
+
+        A symbolic dim comes back from the session as a string (the axis name)
+        or None, never an int. The export only ever marks the batch axis, so a
+        symbolic dim 0 is resolved from the live input batch. Anything else
+        that arrives symbolic falls back to the traced shape, then to 1.
+        """
+        declared = tuple(sess_out.shape)
+        if all(isinstance(d, int) and d > 0 for d in declared):
+            return declared
+
+        src = tuple(trt_inputs[0].shape) if trt_inputs else ()
+        traced = self.output_shapes[i] if (self.output_shapes and i < len(self.output_shapes)) else None
+
+        resolved = []
+        for j, d in enumerate(declared):
+            if isinstance(d, int) and d > 0:
+                resolved.append(d)
+            elif j == 0 and src:
+                resolved.append(int(src[0]))
+            elif traced and j < len(traced):
+                resolved.append(int(traced[j]))
+            else:
+                resolved.append(1)
+        return tuple(resolved)
+
     def _run_ort(self, inputs: tuple):
         import onnxruntime as ort
         import torch
@@ -235,7 +269,15 @@ class CompiledModel:
             except Exception:
                 pass
 
-        io_binding = self._ort_binding
+        # A cached IOBinding holds the OrtValues from the previous call, and ORT
+        # then rejects them as soon as the output shape moves ("pre-allocated
+        # output OrtValue ... has shape {1,512} but the computed output shape
+        # for this run is {8,512}"). Rebind from scratch on a dynamic graph;
+        # the cached path is only safe when the shape is fixed.
+        if self.dynamic_shapes:
+            io_binding = self._ort_session.io_binding()
+        else:
+            io_binding = self._ort_binding
         session_inputs = self._ort_inputs
         from ..config import is_verbose, debug_print
         if is_verbose():
@@ -280,10 +322,7 @@ class CompiledModel:
         # 3. OUTPUT ALLOCATION (cached, zero-copy re-bind)
         ort_output_tensors = []
         for i, sess_out in enumerate(self._ort_outputs):
-            if self.output_shapes and i < len(self.output_shapes) and tuple(self.output_shapes[i]) == tuple(trt_inputs[0].shape):
-                out_shape = tuple(self.output_shapes[i])
-            else:
-                out_shape = tuple([d if (isinstance(d, int) and d > 0) else trt_inputs[0].shape[j] for j, d in enumerate(sess_out.shape)])
+            out_shape = self._resolve_ort_output_shape(i, sess_out, trt_inputs)
             out_dtype = self.output_dtypes[i] if (self.output_dtypes and i < len(self.output_dtypes)) else torch.float32
             key = (i, out_shape, out_dtype)
             t = self._ort_out_tensors.get(key)
@@ -411,10 +450,36 @@ class CompiledModel:
                     shape = tuple(t.shape)
                     if any(s is None or s < 0 for s in shape):
                         has_dynamic = True
-                        actual_shape = tuple(inputs[i].shape) if (inputs and i < len(inputs) and hasattr(inputs[i], 'shape')) else shape
+                        # Prefer the traced shape for `opt`: it is the shape the
+                        # graph was specialised around, and it is stable no
+                        # matter which call builds the engine first.
+                        compiled = self.input_shapes[i] if (self.input_shapes and i < len(self.input_shapes)) else None
+                        runtime_shape = tuple(inputs[i].shape) if (inputs and i < len(inputs) and hasattr(inputs[i], 'shape')) else None
+                        actual_shape = compiled or runtime_shape or shape
                         min_s = tuple(1 if (s is None or s < 0) else s for s in shape)
                         opt_s = tuple(actual_shape[j] if (s is None or s < 0) else s for j, s in enumerate(shape))
-                        max_s = tuple(max(8192, (actual_shape[j] if j < len(actual_shape) else 1) * 4) if (s is None or s < 0) else s for j, s in enumerate(shape))
+                        # TensorRT compiles kernels spanning min..max. The cap
+                        # used to be a flat 8192, which for a *batch* dim means
+                        # building for a thousand-fold range; default to 4x the
+                        # traced size and let the caller raise it.
+                        cap = self.dynamic_max
+                        max_s = tuple(
+                            (cap if cap else max(2, (actual_shape[j] if j < len(actual_shape) else 1) * 4))
+                            if (s is None or s < 0) else s
+                            for j, s in enumerate(shape)
+                        )
+                        for j, s in enumerate(shape):
+                            if s is None or s < 0:
+                                if opt_s[j] < min_s[j]:
+                                    raise ValueError(
+                                        f"optimization profile for '{t.name}' dim {j}: "
+                                        f"opt {opt_s[j]} < min {min_s[j]}"
+                                    )
+                                if max_s[j] < opt_s[j]:
+                                    raise ValueError(
+                                        f"optimization profile for '{t.name}' dim {j}: "
+                                        f"max {max_s[j]} < opt {opt_s[j]}"
+                                    )
                         profile.set_shape(t.name, min_s, opt_s, max_s)
 
                 if has_dynamic:
@@ -504,6 +569,16 @@ class CompiledModel:
                     self._trt_context.set_input_shape(name, t.shape)
                     self._trt_context.set_tensor_address(name, t.data_ptr())
                     in_idx += 1
+
+        # With dynamic input dims TensorRT does not resolve the output dims
+        # until asked. Without this, get_tensor_shape below returns -1 and the
+        # fallback would hand back the *traced* shape -- silently wrong for any
+        # batch other than the one that was compiled.
+        if self.dynamic_shapes and hasattr(self._trt_context, "infer_shapes"):
+            try:
+                self._trt_context.infer_shapes()
+            except Exception:
+                pass
 
         torch_outputs = []
         out_idx = 0

@@ -150,6 +150,10 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
         arg_setup_lines.append("auto ref_in = ctx.GetInput(0);")
         arg_setup_lines.append("auto info = ref_in.GetTensorTypeAndShapeInfo();")
         arg_setup_lines.append("std::vector<int64_t> dim_values = info.GetShape();")
+
+        # Dims the caller asked to keep dynamic: read them from the tensor that
+        # is actually being run, not from the traced shape.
+        _dyn_axes = tuple(getattr(manifest, "dynamic_axes", ()) or ())
         
         import re
         fn_match = re.search(r'\.entry\s+([a-zA-Z0-9_]+)', manifest.ptx)
@@ -242,6 +246,9 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
             elif arg.kind == 'output':
                 out_dim_exprs = []
                 for dim_idx, d in enumerate(arg.shape):
+                    if dim_idx in _dyn_axes:
+                        out_dim_exprs.append(f"(int64_t)(dim_values.size() > {dim_idx} ? dim_values[{dim_idx}] : 1)")
+                        continue
                     try:
                         d_int = int(d)
                         out_dim_exprs.append(str(d_int))
@@ -257,6 +264,9 @@ struct {op_name} : Ort::CustomOpBase<{op_name}, {kernel_name}> {{
             elif arg.kind == 'inplace':
                 out_dim_exprs = []
                 for dim_idx, d in enumerate(arg.shape):
+                    if dim_idx in _dyn_axes:
+                        out_dim_exprs.append(f"(int64_t)(dim_values.size() > {dim_idx} ? dim_values[{dim_idx}] : 1)")
+                        continue
                     try:
                         d_int = int(d)
                         out_dim_exprs.append(str(d_int))

@@ -30,6 +30,10 @@ class KernelManifest:
     # True when the kernel addresses its tensors as a flat buffer (no strides),
     # so it is layout-agnostic and can accept channel-last plugin formats.
     layout_agnostic: bool = False
+
+    # Dim indices that must be read from the tensor at run time rather than
+    # baked from the traced shape. Set by compile(dynamic_shapes=True).
+    dynamic_axes: Tuple[int, ...] = ()
     
     _sym_grid_asts: Tuple[Any, ...] = ()
     _sym_out_asts: Tuple[Any, ...] = ()

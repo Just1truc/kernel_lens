@@ -99,11 +99,17 @@ class TensorRTPluginGenerator:
         
         output_dim_cases = []
         out_args = [a for a in manifest.arguments if a.kind in ('output', 'inplace')]
+        _dyn_axes = tuple(getattr(manifest, "dynamic_axes", ()) or ())
         for out_idx, out_arg in enumerate(out_args):
             output_dim_cases.append(f"if (outputIndex == {out_idx}) {{")
             output_dim_cases.append(f"    nvinfer1::DimsExprs res;")
             output_dim_cases.append(f"    res.nbDims = {len(out_arg.shape)};")
             for d_idx, d in enumerate(out_arg.shape):
+                if d_idx in _dyn_axes:
+                    # Declared dynamic: take the dim from the input at run time
+                    # instead of freezing the traced value.
+                    output_dim_cases.append(f"    res.d[{d_idx}] = inputs[0].d[{d_idx}];")
+                    continue
                 try:
                     d_int = int(d)
                     output_dim_cases.append(f"    res.d[{d_idx}] = exprBuilder.constant({d_int});")
