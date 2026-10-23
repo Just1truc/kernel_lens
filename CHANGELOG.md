@@ -39,35 +39,59 @@ Notable changes to `kernel-lens`. This project follows
 ### Known limitation
 
 - `dynamic_shapes=True` is **refused** when the kernel's launch geometry was
-  frozen before it reached the plugin. The symbolic capture itself works: the
-  tracer runs a real pass and then a `make_fx(tracing_mode="symbolic")` pass, and
-  Pass 2 genuinely produces `Grid ASTs: (((s75*s96 + 255)//256),)` with
-  `x_ptr: shape=(s75, s96)`. `extract_manifests` merges it
-  (`tracer.py:241`). Two things then lose it:
+  frozen before it reached the plugin. Verified by logging on the GPU
+  (RTX 5060 Ti, TensorRT 10.16.1.11), with three claims tested and two of my
+  own earlier explanations disproved:
 
-  1. **The SymInts are mutated in place by the launch that produced them.**
-     `patched_run` captures the grid and then lets the launch proceed; Triton
-     needs an `int`, PyTorch resolves the symbol via its hint and specialises
-     the node to a constant -- the same object the manifest holds. Reading the
-     same manifest gives `grid_expr_strs = ('((s75*s96 + 255)//256)',)` when
-     snapshotted at capture time, and `_sym_grid_asts = (16,)` afterwards.
-     Every consumer therefore sees `16`: the generators emit
-     `unsigned int grid_x = std::max(1u, (unsigned int)(16));`, the scalar
-     becomes `m_n(4096)`, and `grid_cxx_exprs` collapses to `['16','1','1']`.
-  2. **The substitution uses symbol ids as dimension indices.** Both generators
-     do `re.sub(r'\bs(\d+)\b', ... dims.d[\1] ...)`, but `s75` is a shape-env
-     symbol id, not a dim index; it would read dimension 75 of a 2-D tensor and
-     the bounds guard silently falls back to 1. The manifest already computes
-     the correct mapping in `_transpile_symints_to_cxx()` (keyed by expression
-     string, with the real dim index) and stores it in `grid_cxx_exprs` -- but
-     neither generator consumes that, and `cxx_expr` is never read at all.
+  1. `int()` does **not** mutate the SymInt. Measured: `int(g) == 16` before and
+     after, same `id`, same expression. (My earlier "Triton's int() specialises
+     the node in place" was wrong.)
+  2. The launch does **not** mutate it either. Logging the grid around the real
+     `triton.JITFunction.run` gives the identical object, `id` and expression
+     before and after. (My "mutated in place by the launch" was wrong.)
+  3. The symbolic capture works and the merge keeps it. Replaying
+     `extract_manifests` by hand -- both passes, then the merge verbatim from
+     `tracer.py:233-253` -- yields
+     `grid elem: type=SymInt str='((s75*s96 + 255)//256)'` and
+     `scalar n: _sym_ast=s75*s96 (type SymInt)`.
 
-  The fix is correspondingly small: snapshot the expression string and the
-  symbol->dim map at capture time, substitute by name in both generators, and
-  consume `cxx_expr` for scalars. Until then `_check_dynamic_supported()` raises
-  rather than returning wrong numbers or reading out of bounds, and
-  `tests/test_conformance.py` pins the refusal (`dynamic_batch_guard`,
-  `dynamic_grid_guard`).
+  The real cause is an **accessor**, not a mutation or a lifetime problem:
+
+  ```
+  node._expr = ((s75*s96 + 255)//256)   # the raw expression, intact
+  node.expr  = 16                       # the public property, hint-specialised
+  node.hint  = 16
+  ```
+
+  `SymNode.expr` (and therefore `str(symint)`) returns the specialised constant,
+  while `_expr` keeps the symbol. Everything that consumes the symbolic value
+  reads `.expr`:
+
+  - `manifest._transpile_symints_to_cxx()` keys `sym_map` on
+    `str(dim.node.expr)` -> `"16"` instead of `"s75"`, so the map never matches
+    and `grid_cxx_exprs` collapses to `['16', '1', '1']`
+  - both generators do `str(g.node.expr)` -> `"16"` -> no `s(\d+)` to
+    substitute -> the emitted C++ is
+    `unsigned int grid_x = std::max(1u, (unsigned int)(16));`
+  - the scalar keeps a SymInt but reads it through the same accessor, so the
+    plugin constructor is `m_n(4096)`
+
+  Behind that sits a second, independent bug worth fixing at the same time: the
+  substitution treats symbol ids as dimension indices. Applied to the surviving
+  expression it produces
+  `dims.nbDims > 75 ? dims.d[75] : 1` for `s75` on a 2-D input, so the bounds
+  guard falls back to `1` and the grid becomes one block. The manifest already
+  builds the correct mapping (expression string -> real dim index) in
+  `sym_map`, but neither generator consumes `grid_cxx_exprs`, and `cxx_expr` is
+  never read at all.
+
+  Fix: read `node._expr` (falling back to `.expr`) in `_transpile_symints_to_cxx`
+  and in both generators, consume `grid_cxx_exprs`/`cxx_expr` instead of
+  re-deriving, and make the TRT scalar members runtime -- they are currently
+  serialised, so that part touches the plugin template. Until then
+  `_check_dynamic_supported()` raises rather than returning wrong numbers or
+  reading out of bounds, and `tests/test_conformance.py` pins the refusal
+  (`dynamic_batch_guard`, `dynamic_grid_guard`).
 
 ## [1.2.1] — 2026-10-23
 
