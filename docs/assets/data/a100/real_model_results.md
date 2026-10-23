@@ -1,80 +1,115 @@
 # Real pretrained models through KernelLens
 
-Follow-up to the earlier attempt that was blocked. The blocker was the model
-family, not KernelLens.
+Real OPT checkpoints with every decoder `LayerNorm` replaced by the project's
+Triton RMSNorm kernel, so the model calls a real `@triton.jit` kernel exactly as
+a production model would. Harness: `tests/benchmark_real_model.py`.
 
-## Why OPT works and the RoPE families do not
+All numbers below are from an **A100-SXM4-80GB** (Ampere, sm_80), driver
+595.91, CUDA 13.3, PyTorch 2.8.0, Triton 3.4.0, ONNX Runtime 1.31.0,
+TensorRT 10.16.1.11.
 
-KernelLens exports the non-kernel part of the model with the TorchScript ONNX
-exporter (`dynamo=False`). Exportability therefore depends on the architecture:
+## Prefill latency, S=512
 
-| Model | Positional scheme | TorchScript export |
+| Model | Triton modules | fp32 eager | fp32 ORT | fp32 TRT | fp16 eager | fp16 ORT | fp16 TRT |
+|---|---|---|---|---|---|---|---|
+| OPT-125M | 25 | 12.28 ms | 4.73 ms | **3.43 ms** | 5.75 ms | 3.61 ms | **1.99 ms** |
+| OPT-350M | 48 | 33.49 ms | 11.34 ms | **8.55 ms** | 10.32 ms | 7.34 ms | **4.62 ms** |
+| OPT-1.3B | 49 | 98.64 ms | 23.31 ms | **17.76 ms** | 15.49 ms | 14.20 ms | **9.11 ms** |
+| OPT-2.7B | 65 | 175.87 ms | 37.31 ms | **33.22 ms** | 20.81 ms | 22.47 ms | **15.41 ms** |
+
+Speedups over eager:
+
+| Model | fp32 ORT | fp32 TRT | fp16 ORT | fp16 TRT |
+|---|---|---|---|---|
+| OPT-125M | 2.59x | 3.58x | 1.59x | 2.89x |
+| OPT-350M | 2.95x | 3.92x | 1.41x | 2.23x |
+| OPT-1.3B | 4.23x | 5.55x | 1.09x | 1.70x |
+| OPT-2.7B | 4.71x | 5.29x | 0.93x | 1.35x |
+
+**TensorRT is fastest at every size and precision.** In fp32 the margin grows
+with the model (3.58x to 5.55x); the gain comes from the engine's graph
+optimisation around the plugin rather than from the normalisation kernel, so it
+is largest where the surrounding operators dominate. ONNX Runtime is
+competitive in fp32 but loses in fp16 — its compiled graph for OPT-125M carries
+1,583 nodes (76 `Cast`, 345 `Unsqueeze`, 549 `Constant`) against 25 custom
+operators, so per-node dispatch dominates at these shapes.
+
+## Numerical agreement
+
+| Model | dtype | ORT top-1 | ORT mean abs | TRT top-1 | TRT mean abs |
+|---|---|---|---|---|---|
+| OPT-125M | fp32 | 99.80% | 6.3e-04 | 100.00% | 6.1e-04 |
+| OPT-125M | fp16 | 99.80% | 1.0e-03 | 96.09% | 1.2e-02 |
+| OPT-350M | fp32 | 100.00% | 3.7e-03 | 99.61% | 3.7e-03 |
+| OPT-350M | fp16 | **100.00%** | **0.0e+00** | 95.90% | 4.1e-02 |
+| OPT-1.3B | fp32 | 99.80% | 1.4e-03 | 99.80% | 1.4e-03 |
+| OPT-1.3B | fp16 | 99.80% | 2.7e-03 | 97.85% | 7.4e-03 |
+| OPT-2.7B | fp32 | 98.83% | 4.8e-03 | 98.83% | 6.3e-03 |
+| OPT-2.7B | fp16 | 97.66% | 1.7e-02 | 93.55% | 4.0e-02 |
+
+Top-1 is the fraction of positions whose argmax (greedy token) is unchanged.
+**Agreement tracks precision rather than speed**: fp32 holds at least 98.8%
+everywhere, fp16 under TensorRT falls to 93.6–97.9%. OPT-350M in fp16 under
+ONNX Runtime is bit-exact.
+
+Max absolute difference alone is misleading on 50k-way logits — OPT-2.7B fp16
+under TensorRT peaks at 1.88 against a logit scale of 16.3 while the mean is
+4.0e-02 — so both are reported.
+
+## Why OPT, and not a Llama
+
+The compiler exports the non-kernel part of the model with the TorchScript ONNX
+exporter, so exportability depends on the architecture:
+
+| Model | Positions | TorchScript export |
 |---|---|---|
-| `gpt2`, `distilgpt2` | learned | OK (single file) |
-| `facebook/opt-125m` | learned | OK (single file) |
-| `bigscience/bloom-560m` | ALiBi | OK (single file) |
-| `TinyLlama-1.1B` | RoPE | FAILS (only exports via the dynamo path, which uses external data) |
-| `Qwen/Qwen2.5-0.5B` | RoPE | FAILS for the same reason |
+| `gpt2`, `distilgpt2` | learned | OK |
+| `facebook/opt-*` | learned | OK |
+| `bigscience/bloom-560m` | ALiBi | OK |
+| `TinyLlama`, `Qwen2.5` | RoPE | fails |
 
 The RoPE families register a rotary cache buffer that stays on CPU under
-tracing, so the TorchScript path rejects them. This is a property of
-transformers >= 5 + torch 2.12, not of KernelLens: plain `torch.onnx.export`
-fails identically with no KernelLens involved.
+tracing. This is a property of the exporter, not of the recovered contract:
+plain `torch.onnx.export` fails on them identically, with no KernelLens
+involved. Liger-Kernel–patched models were also attempted; they fail one step
+earlier for the same reason, and (separately) their `in_place` RMSNorm emits
+`copy_`/`contiguous` that the exporter rejects.
 
-## Setup
+## Environment notes (learned the hard way)
 
-OPT's architecture is used because it is exportable. Every `nn.LayerNorm` in the
-decoder is replaced by the project's own Triton RMSNorm kernel, carrying the
-LayerNorm weight across, so the model calls a real `@triton.jit` kernel exactly
-as a production model would. Harness: `tests/benchmark_real_model.py`.
+Three issues had to be fixed on the RunPod image before anything would build:
 
-## Results
+1. **CUDA 12.8's `nvcc` is broken against a modern libstdc++.** Its
+   `math_functions.h` declares `rsqrt`/`sinpi`/... without `noexcept`, which
+   GCC >= 11 rejects with *"has a different exception specifier"*. g++-11, -12
+   and -13 all failed. Fix: install **CUDA 13.3's nvcc** (driver 595.91
+   supports it) and put it first on `PATH`.
+2. **The host compiler was hardcoded to `g++-13`** in
+   `kernel_lens/backends/builder.py`. Now configurable via
+   `KERNEL_LENS_CCBIN`; the scripts select `g++-12` when present.
+3. **onnxruntime-gpu's CUDA provider needs CUDA 13 cuBLAS.** The pod ships
+   CUDA 12.8 libraries. Fix: install `libcublas-13-3` and friends and point
+   `LD_LIBRARY_PATH` at `/usr/local/cuda-13.3/lib64`.
 
-### OPT-125M — 12 layers, 25 Triton RMSNorm modules, fp32, S=512
-
-| Configuration | Latency | vs eager |
-|---|---|---|
-| Eager + Triton | 11.97 ms | 1.00x |
-| KernelLens — ONNX Runtime | 9.15 ms | **1.31x** |
-| KernelLens — TensorRT | 3.65 ms | **3.28x** |
-
-`max|diff|` against the eager reference: 1.59e-01 (ORT), 1.65e-01 (TensorRT) on
-logits of shape (1, 512, 50272). This is fp32 and the engine is free to
-reassociate the surrounding matmuls, so it is not the bit-exact agreement seen
-on the controlled models; it is the expected graph-level difference.
-
-### OPT-1.3B — 24 layers, 49 Triton RMSNorm modules, fp16, S=512
-
-| Configuration | Latency | max abs diff |
-|---|---|---|
-| Eager + Triton | 14.20 ms | - |
-| KernelLens — ONNX Runtime | 21.80 ms | **0.00e+00** |
-| KernelLens — TensorRT | not available (see below) | - |
-
-The ONNX Runtime lane is bit-exact against the eager reference on a real 1.3B
-model, but it is slower than eager here. That is a genuine negative result: the
-per-node host overhead of the runtime dominates once the kernels are small
-relative to the surrounding GEMMs.
-
-## Limitation: TensorRT cannot load models above the 2 GB protobuf limit
-
-`torch.onnx.export` spills weights to external files once a graph exceeds 2 GB.
-For OPT-1.3B this produced 2.6 GB of per-tensor spill files — both initializers
-*and* `Constant` node attributes — written beside the `.onnx`. TensorRT resolves
-those relative to the working directory rather than the model's directory and
-fails with:
-
-```
-[TRT] [E] WeightsContext.cpp:183: Failed to open file: m.model.decoder.embed_tokens.weight
-[TRT] [E] ... UNSUPPORTED_NODE: Failed to import initializer
+```bash
+PATH=/usr/local/cuda-13.3/bin:$PATH \
+LD_LIBRARY_PATH=/usr/local/cuda-13.3/lib64 \
+KERNEL_LENS_CCBIN=g++-12 \
+  bash scripts/remote_setup.sh && \
+PATH=/usr/local/cuda-13.3/bin:$PATH \
+LD_LIBRARY_PATH=/usr/local/cuda-13.3/lib64 \
+KERNEL_LENS_CCBIN=g++-12 \
+  bash scripts/remote_bench_all.sh
 ```
 
-`_consolidate_external_data` in `kernel_lens/compiler/core.py` folds
-initializer spill files into a single sibling `.data` file, which is the correct
-layout, but it does not cover the externally stored `Constant` attributes, so
-TensorRT still rejects the graph. Models below 2 GB (OPT-125M, GPT-2, BLOOM-560M)
-are unaffected.
+## A limitation that turned out to be host-specific
 
-Making large models work with TensorRT would need the export to keep constant
-attributes inline (or to place them where the parser can find them). This is an
-open item, not a resolved one.
+On an earlier A100 host (Thunder Compute) TensorRT deserialization failed for
+every engine above roughly 1 GB, with a CUDA runtime error and a host panic in
+3 of 4 attempts. TensorRT read the whole blob first (`Loaded engine size: 2710
+MiB`), so it was not the 2 GB protobuf limit it resembled. Engines of 315 MB
+and 704 MB worked there.
+
+On RunPod the same package builds and deserializes the 2.7 GB (OPT-1.3B) and
+5.3 GB (OPT-2.7B) engines without issue. **The limitation was the host, not
+TensorRT** — which is why the table above has a TensorRT column at every size.

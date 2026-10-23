@@ -389,6 +389,19 @@ class RmsnormPluginCreator : public nvinfer1::IPluginCreator { /* ... */ };
         </ul>
       </div>
     </div>
+
+    <h3 style="margin-top:38px">Real pretrained models</h3>
+    <p class="note">Every decoder <code>LayerNorm</code> of a real OPT checkpoint replaced by the Triton RMSNorm kernel and served through both engines. Prefill latency, S=512, A100-SXM4-80GB. Figures are speedup over eager.</p>
+    <table class="verdict">
+      <thead><tr><th>Model</th><th class="num">fp32 ORT</th><th class="num">fp32 TRT</th><th class="num">fp16 ORT</th><th class="num">fp16 TRT</th></tr></thead>
+      <tbody>
+        <tr><td>OPT-125M &middot; 25 kernels</td><td class="num">2.59&times;</td><td class="num"><b>3.58&times;</b></td><td class="num">1.59&times;</td><td class="num"><b>2.89&times;</b></td></tr>
+        <tr><td>OPT-350M &middot; 48 kernels</td><td class="num">2.95&times;</td><td class="num"><b>3.92&times;</b></td><td class="num">1.41&times;</td><td class="num"><b>2.23&times;</b></td></tr>
+        <tr><td>OPT-1.3B &middot; 49 kernels</td><td class="num">4.23&times;</td><td class="num"><b>5.55&times;</b></td><td class="num">1.09&times;</td><td class="num"><b>1.70&times;</b></td></tr>
+        <tr><td>OPT-2.7B &middot; 65 kernels</td><td class="num">4.71&times;</td><td class="num"><b>5.29&times;</b></td><td class="num">0.93&times;</td><td class="num"><b>1.35&times;</b></td></tr>
+      </tbody>
+    </table>
+    <p class="note">TensorRT is fastest at every size and precision; in fp32 the margin <em>grows</em> with the model (3.6&times; to 5.6&times;), because the gain comes from the engine's graph optimisation around the plugin rather than the kernel itself. ONNX Runtime is competitive in fp32 but loses in fp16, where its compiled graph carries 1,583 nodes against 25 custom operators and per-node dispatch dominates. Accuracy tracks precision, not speed: fp32 keeps the same greedy token on &ge;98.8% of positions, fp16 under TensorRT on 93.6&ndash;97.9%; OPT-350M in fp16 under ORT is bit-exact.</p>
   </section>
 
   <section id="why" style="--dot: var(--s6)">

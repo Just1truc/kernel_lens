@@ -462,9 +462,10 @@ which isolates the recovered plumbing from the arithmetic.
 
 The conformance, parity and real-model results are additionally reproduced on a
 second architecture: an NVIDIA A100-SXM4-80GB (Ampere, \texttt{sm\_80}) with
-driver 610.43.02, CUDA~13.3, PyTorch~2.12.1, Triton~3.7.1, ONNX
-Runtime~1.31.0 and TensorRT~10.16.1.11. Two results are reported separately per
-configuration and never blended.
+driver 595.91, CUDA~13.3, PyTorch~2.8.0, Triton~3.4.0, ONNX
+Runtime~1.31.0 and TensorRT~10.16.1.11. Table~\ref{tab:real} is measured on
+that configuration. Results are reported per configuration and never blended
+across them.
 
 \subsection{Numerical parity}
 
@@ -609,55 +610,41 @@ exporter rather than of the recovered contract, since plain
 \toprule
  & Triton & \multicolumn{2}{c}{fp32} & \multicolumn{2}{c}{fp16} \\
 \cmidrule(lr){3-4}\cmidrule(lr){5-6}
-Model & kernels & Eager & KernelLens & Eager & KernelLens \\
+Model & modules & Eager & ORT / TRT & Eager & ORT / TRT \\
 \midrule
-OPT-125M & 25 & 11.97\,ms & 9.15\,ms ($1.31\times$) & 4.93\,ms & 8.80\,ms ($0.56\times$) \\
-OPT-1.3B & 49 & 87.55\,ms & 32.03\,ms ($2.73\times$) & 13.86\,ms & 21.80\,ms ($0.65\times$) \\
-OPT-2.7B & 65 & 175.37\,ms & 49.35\,ms ($3.55\times$) & 20.97\,ms & 33.81\,ms ($0.62\times$) \\
+OPT-125M & 25 & 12.3\,ms & 4.7 / \textbf{3.4}\,ms & 5.8\,ms & 3.6 / \textbf{2.0}\,ms \\
+OPT-350M & 48 & 33.5\,ms & 11.3 / \textbf{8.6}\,ms & 10.3\,ms & 7.3 / \textbf{4.6}\,ms \\
+OPT-1.3B & 49 & 98.6\,ms & 23.3 / \textbf{17.8}\,ms & 15.5\,ms & 14.2 / \textbf{9.1}\,ms \\
+OPT-2.7B & 65 & 175.9\,ms & 37.3 / \textbf{33.2}\,ms & 20.8\,ms & 22.5 / \textbf{15.4}\,ms \\
 \bottomrule
 \end{tabular}
 \captionof{table}{Real pretrained OPT checkpoints with every decoder
 \texttt{LayerNorm} replaced by the Triton RMSNorm kernel. Prefill latency,
-$S{=}512$; KernelLens numbers are the ONNX Runtime lane. Parenthesised figures
-are relative to eager.}
+$S{=}512$, on an A100-SXM4-80GB. Bold is TensorRT, the fastest lane at every
+size and precision.}
 \label{tab:real}
 \end{center}
 
-In fp32 the compiled model is faster than eager at every size, and the margin
-\emph{grows} with the model: $1.31\times$, $2.73\times$ and $3.55\times$ for
-125M, 1.3B and 2.7B. The advantage comes from the engine's graph optimisation
-around the plugin rather than from the normalisation kernel itself, so it is
-largest where the surrounding operators dominate. In fp16 the ordering reverses
-and the runtime is consistently $1.5$--$1.8\times$ slower than eager,
-independently of size: the compiled fp16 graph for OPT-125M contains $1{,}583$
-nodes ($76$ \texttt{Cast}, $345$ \texttt{Unsqueeze}, $549$ \texttt{Constant})
-against only $25$ custom operators, so per-node dispatch overhead dominates at
-these shapes. TensorRT, which fuses rather than dispatching node-by-node, is
-instead $2.29\times$ faster than eager on the same fp16 model. The value of
-keeping kernels is thus engine- and precision-dependent, not size-dependent.
+TensorRT is the fastest lane at every model size and in both precisions, and
+in fp32 the margin grows with the model: $3.58\times$, $3.92\times$,
+$5.55\times$ and $5.29\times$ over eager for 125M, 350M, 1.3B and 2.7B. The
+advantage comes from the engine's graph optimisation around the plugin rather
+than from the normalisation kernel itself, so it is largest where the
+surrounding operators dominate. ONNX Runtime is competitive in fp32
+($2.6$--$4.7\times$) but loses in fp16 ($0.93$--$1.59\times$): the compiled
+fp16 graph for OPT-125M carries $1{,}583$ nodes ($76$ \texttt{Cast}, $345$
+\texttt{Unsqueeze}, $549$ \texttt{Constant}) against only $25$ custom
+operators, so per-node dispatch overhead dominates at these shapes. Precision
+therefore matters more than engine choice for the runtime lane, and neither
+engine wins by a fixed factor --- the value of keeping kernels is workload- and
+precision-dependent, not size-dependent.
 
-Numerical agreement tracks precision. In fp32 the maximum absolute logit
-difference is $1.98\times10^{-2}$ on OPT-1.3B and $1.63\times10^{-1}$ on
-OPT-2.7B, against logit scales of $13.5$ and $16.0$, with $99.80\%$ and
-$98.83\%$ of positions retaining the same argmax. In fp16 the mean error is
-smaller but the maximum is larger, and top-1 agreement falls to $95.70\%$ on
-OPT-125M under TensorRT. Both precisions are reported rather than the more
-flattering one alone.
-
-OPT-350M is a useful control in this set: its ONNX Runtime result is
-bit-exact against eager --- $100\%$ top-1 agreement and zero absolute
-difference over all logits --- while TensorRT is $1.64\times$ faster
-($5.46$\,ms against $8.97$\,ms).
-
-\paragraph{Engine size.}
-TensorRT deserialization fails on the A100 host used here for engines above
-roughly $1$\,GB. The runtime reads the entire blob successfully (it logs
-``Loaded engine size: 2710 MiB'') and then aborts with a CUDA runtime error; in
-three of four attempts the host itself panicked. Engines of $315$\,MB and
-$704$\,MB deserialize normally, so the boundary is between those and
-$2{,}710$\,MB rather than the $2$\,GB protobuf limit it initially resembled.
-All Blackwell results are unaffected. We therefore report TensorRT only where
-its engine fits, and the ONNX Runtime lane carries the larger checkpoints.
+Numerical agreement tracks precision rather than speed. In fp32 every model
+retains the same argmax on at least $98.8\%$ of positions and the mean absolute
+logit difference stays below $6.3\times10^{-3}$; OPT-350M in fp16 is bit-exact
+under ONNX Runtime. Under TensorRT in fp16, agreement falls to
+$93.6$--$97.9\%$ with a mean difference of up to $4.0\times10^{-2}$. Both
+precisions are reported rather than the more flattering one alone.
 
 \section{Discussion}
 
