@@ -146,7 +146,6 @@ def main():
     # kernels rather than reimplementing them, so the comparison is like for
     # like. Same settings as the folding experiment.
     try:
-        import torch._dynamo
         torch._dynamo.reset()
         cmodel = torch.compile(wrapped)
         with torch.no_grad():
