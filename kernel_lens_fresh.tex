@@ -68,8 +68,9 @@ re-bitwidth'd; (ii)~capturing the launch grid symbolically and transpiling it to
 C++ evaluated at run time; and (iii)~classifying each argument as input, output
 or in-place by static AST analysis, including through nested helper functions.
 Re-establishing the interface \emph{inside} the ONNX graph lets the engine keep
-its graph optimisations around the plugin. The result replaces roughly
-$1{,}300$~lines of hand-written C++ per kernel with two Python calls. On an
+its graph optimisations around the plugin. The result replaces $1{,}137$~lines
+of hand-written C++ --- measured, not estimated, on one fused RMSNorm kernel
+built for both backends --- with two Python calls. On an
 RTX~5060~Ti, KernelLens reproduces native Triton exactly on ten research
 workloads and fourteen module patterns, and on a block whose attention is a
 custom squared-ReLU flash kernel it is $1.99\times$ faster than the folded-only
@@ -733,7 +734,7 @@ it and a C++ engine is implicit. We showed that the interface can be recovered
 automatically---the PTX entry signature, the symbolic launch grid, and the
 argument taxonomy---and re-established as native TensorRT and ONNX Runtime
 operators injected into the graph. The composition is exact on the research
-kernels and fourteen module patterns, it replaces roughly $1{,}300$ lines of
+kernels and fourteen module patterns, it replaces $1{,}137$ lines of
 hand-written C++ per kernel with two Python calls, and it pays off: keeping the
 kernel while letting the engine fold the rest is $1.99\times$ faster than the
 folded-only formulation and $1.08\times$ faster than the unfused kernel path.
