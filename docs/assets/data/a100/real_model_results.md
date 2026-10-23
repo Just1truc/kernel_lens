@@ -18,8 +18,8 @@ surrounding operators are scheduled.
 |---|---|---|---|---|---|
 | OPT-125M | fp32 | 12.1 ms | 10.9 ms | 4.8 ms | **3.4 ms** |
 | OPT-125M | fp16 | 5.7 ms | 2.4 ms | 3.6 ms | **2.0 ms** |
-| OPT-350M | fp32 | 33.5 ms | - | 11.3 ms | **8.6 ms** |
-| OPT-350M | fp16 | 10.3 ms | - | 7.3 ms | **4.6 ms** |
+| OPT-350M | fp32 | 33.2 ms | 27.7 ms | 10.2 ms | **8.6 ms** |
+| OPT-350M | fp16 | 10.3 ms | 5.1 ms | 7.2 ms | **4.8 ms** |
 | OPT-1.3B | fp32 | 98.6 ms | 88.0 ms | 23.4 ms | **19.0 ms** |
 | OPT-1.3B | fp16 | 14.7 ms | 10.8 ms | 15.6 ms | **9.9 ms** |
 | OPT-2.7B | fp32 | 175.9 ms | 172.7 ms | 37.4 ms | **31.7 ms** |
@@ -31,9 +31,11 @@ Speedup over `torch.compile`:
 | Model | dtype | ORT | TensorRT |
 |---|---|---|---|
 | OPT-125M | fp32 | 2.27x | **3.18x** |
+| OPT-350M | fp32 | 2.71x | **3.24x** |
 | OPT-1.3B | fp32 | 3.76x | **4.62x** |
 | OPT-2.7B | fp32 | 4.62x | **5.45x** |
 | OPT-125M | fp16 | 0.67x | **1.22x** |
+| OPT-350M | fp16 | 0.71x | **1.06x** |
 | OPT-1.3B | fp16 | 0.69x | **1.09x** |
 | OPT-2.7B | fp16 | 0.78x | **1.06x** |
 | OPT-6.7B | fp16 | 0.84x | **1.09x** |
