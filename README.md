@@ -90,8 +90,10 @@ generator emits `IPluginV2DynamicExt`).
 **Environment:** `KERNEL_LENS_CACHE_DIR` (put it on a persistent volume so the
 `.so` / `.engine` artifacts survive `kl.load`), `KERNEL_LENS_CCBIN` (host
 compiler for `nvcc` — CUDA toolkits before 12.9 reject GCC 13's exception
-specifiers, so set it to `g++-12` there), `KERNEL_LENS_DEBUG`,
-`TENSORRT_INCLUDE_DIR`.
+specifiers, so set it to `g++-12` there), `KERNEL_LENS_DEBUG` (or `KL_VERBOSE`),
+`TENSORRT_INCLUDE_DIR`, and `KERNEL_LENS_STREAM_READER=1` to deserialize engines
+above 2 GB from disk rather than from a memory buffer (opt-in; see the
+[changelog](CHANGELOG.md)).
 
 ## Quickstart
 

@@ -5,17 +5,35 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "kernel-lens"
 version = "1.2.1"
-description = "A production-grade, multi-backend compiler for Triton kernels (ONNX & TensorRT)"
+description = "Compile PyTorch models with custom @triton.jit kernels into ONNX Runtime and TensorRT C++ plugins"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [
-    { name = "Compiler Engineer" }
+    { name = "Justin Duc", email = "justin.duc@galiad-research.com" }
+]
+keywords = [
+    "triton",
+    "tensorrt",
+    "onnxruntime",
+    "compiler",
+    "gpu",
+    "cuda",
+    "kernel",
+    "inference",
+    "deep-learning",
 ]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
+    "Environment :: GPU :: NVIDIA CUDA",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
@@ -31,10 +49,16 @@ dependencies = [
 ort = ["onnxruntime-gpu>=1.17.0"]
 trt = ["tensorrt>=8.6.0,<11.0.0", "tensorrt-cu12-libs<11.0.0"]
 all = ["onnxruntime-gpu>=1.17.0", "tensorrt>=8.6.0,<11.0.0", "tensorrt-cu12-libs<11.0.0"]
+# Needed only by tests/benchmark_real_model.py, which serves real checkpoints.
+bench = ["transformers>=4.40.0"]
 
 [project.urls]
+Homepage = "https://just1truc.github.io/kernel_lens/"
+Documentation = "https://just1truc.github.io/kernel_lens/"
+Changelog = "https://github.com/Just1truc/kernel_lens/blob/main/CHANGELOG.md"
 "Source Code" = "https://github.com/Just1truc/kernel_lens"
 "Bug Tracker" = "https://github.com/Just1truc/kernel_lens/issues"
+Paper = "https://doi.org/10.5281/zenodo.23194523"
 
 [tool.setuptools.packages.find]
 include = ["kernel_lens*"]
