@@ -39,14 +39,33 @@ Notable changes to `kernel-lens`. This project follows
 ### Known limitation
 
 - `dynamic_shapes=True` is **refused** when the kernel's launch geometry was
-  frozen at compile time. `tracer.py` evaluates `n = x.numel()` and the Triton
-  grid in Python during tracing, so the plugin carries the traced values; a
-  different batch would change the element count and the grid while the plugin
-  kept the old ones, reading out of bounds. `_check_dynamic_supported()` raises
-  rather than returning wrong numbers. Making this work needs the symbolic
-  tracing pass to produce grid and scalar *expressions* over the input dims --
-  `_sym_grid_asts` is currently populated with the concrete evaluated grid, so
-  the substitution in the generators has nothing to substitute.
+  frozen before it reached the plugin. The symbolic capture itself works: the
+  tracer runs a real pass and then a `make_fx(tracing_mode="symbolic")` pass, and
+  Pass 2 genuinely produces `Grid ASTs: (((s75*s96 + 255)//256),)` with
+  `x_ptr: shape=(s75, s96)`. `extract_manifests` merges it
+  (`tracer.py:241`). Two things then lose it:
+
+  1. **The SymInts are mutated in place by the launch that produced them.**
+     `patched_run` captures the grid and then lets the launch proceed; Triton
+     needs an `int`, PyTorch resolves the symbol via its hint and specialises
+     the node to a constant -- the same object the manifest holds. Reading the
+     same manifest gives `grid_expr_strs = ('((s75*s96 + 255)//256)',)` when
+     snapshotted at capture time, and `_sym_grid_asts = (16,)` afterwards.
+     Every consumer therefore sees `16`: the generators emit
+     `unsigned int grid_x = std::max(1u, (unsigned int)(16));`, the scalar
+     becomes `m_n(4096)`, and `grid_cxx_exprs` collapses to `['16','1','1']`.
+  2. **The substitution uses symbol ids as dimension indices.** Both generators
+     do `re.sub(r'\bs(\d+)\b', ... dims.d[\1] ...)`, but `s75` is a shape-env
+     symbol id, not a dim index; it would read dimension 75 of a 2-D tensor and
+     the bounds guard silently falls back to 1. The manifest already computes
+     the correct mapping in `_transpile_symints_to_cxx()` (keyed by expression
+     string, with the real dim index) and stores it in `grid_cxx_exprs` -- but
+     neither generator consumes that, and `cxx_expr` is never read at all.
+
+  The fix is correspondingly small: snapshot the expression string and the
+  symbol->dim map at capture time, substitute by name in both generators, and
+  consume `cxx_expr` for scalars. Until then `_check_dynamic_supported()` raises
+  rather than returning wrong numbers or reading out of bounds, and
   `tests/test_conformance.py` pins the refusal (`dynamic_batch_guard`,
   `dynamic_grid_guard`).
 
