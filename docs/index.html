@@ -391,20 +391,30 @@ class RmsnormPluginCreator : public nvinfer1::IPluginCreator { /* ... */ };
     </div>
 
     <h3 style="margin-top:38px">Real pretrained models</h3>
-    <p class="note">Every decoder <code>LayerNorm</code> of a real OPT checkpoint replaced by the Triton RMSNorm kernel and served through both engines. Prefill latency, S=512, A100-SXM4-80GB. <code>torch.compile</code> is the baseline that matters &mdash; it <em>captures</em> the same Triton kernels rather than reimplementing them, so the two differ only in how the surrounding operators are scheduled.</p>
-    <table class="verdict">
-      <thead><tr><th>Model</th><th class="num">eager</th><th class="num">torch.compile</th><th class="num">ORT</th><th class="num">TensorRT</th></tr></thead>
-      <tbody>
-        <tr><td>OPT-125M &middot; fp32</td><td class="num">12.1 ms</td><td class="num">10.9 ms</td><td class="num">4.8 ms</td><td class="num"><b>3.4 ms</b></td></tr>
-        <tr><td>OPT-125M &middot; fp16</td><td class="num">5.7 ms</td><td class="num">2.4 ms</td><td class="num">3.6 ms</td><td class="num"><b>2.0 ms</b></td></tr>
-        <tr><td>OPT-1.3B &middot; fp32</td><td class="num">98.6 ms</td><td class="num">88.0 ms</td><td class="num">23.4 ms</td><td class="num"><b>19.0 ms</b></td></tr>
-        <tr><td>OPT-1.3B &middot; fp16</td><td class="num">14.7 ms</td><td class="num">10.8 ms</td><td class="num">15.6 ms</td><td class="num"><b>9.9 ms</b></td></tr>
-        <tr><td>OPT-2.7B &middot; fp32</td><td class="num">175.9 ms</td><td class="num">172.7 ms</td><td class="num">37.4 ms</td><td class="num"><b>31.7 ms</b></td></tr>
-        <tr><td>OPT-2.7B &middot; fp16</td><td class="num">22.2 ms</td><td class="num">17.5 ms</td><td class="num">22.6 ms</td><td class="num"><b>16.5 ms</b></td></tr>
-        <tr><td>OPT-6.7B &middot; fp16</td><td class="num">37.0 ms</td><td class="num">33.8 ms</td><td class="num">40.2 ms</td><td class="num"><b>31.1 ms</b></td></tr>
-      </tbody>
-    </table>
-    <p class="note">TensorRT is fastest throughout, but the honest comparison is against <code>torch.compile</code>, and it splits by precision. In <b>fp32</b>, <code>torch.compile</code> barely beats eager (1.02&ndash;1.12&times;) because it leaves the surrounding operators unfused, while KernelLens fuses them: <b>3.2&ndash;5.5&times; faster</b>, growing with model size. In <b>fp16</b> the ordering reverses &mdash; <code>torch.compile</code> optimises well there and KernelLens only matches it: TensorRT edges it by 1.06&ndash;1.22&times;, and ONNX Runtime is <b>0.67&ndash;0.84&times;, i.e. slower</b>. Keeping kernels pays when the baseline leaves the graph unfused; when it already fuses, we break even, and we do not claim otherwise. Accuracy tracks precision rather than speed: fp32 holds the same greedy token on &ge;98.8% of positions, fp16 under TensorRT on 93.4&ndash;97.9%, and OPT-350M in fp16 under ORT is bit-exact.</p>
+    <p class="note">Every decoder <code>LayerNorm</code> of a real OPT checkpoint replaced by the Triton RMSNorm kernel and served through both engines. Prefill latency, S=512, A100-SXM4-80GB.</p>
+
+    <div class="cmp" style="margin-top:22px">
+      <div class="cmphead"><span>Speedup over <code>torch.compile</code></span><span class="muted">bar length = magnitude &middot; <b style="color:var(--c-kl)">faster</b> / <b style="color:var(--c-eager)">slower</b></span></div>
+
+      <div class="cmpgrp"><span class="cmpglab">fp32</span>
+        <div class="cmprow"><span class="cmpm">OPT-125M</span><span class="cmpb"><i style="width:25px;--c:var(--c-kl)"></i><em>2.3&times;</em></span><span class="cmpb"><i style="width:35px;--c:var(--c-kl)"></i><em>3.2&times;</em></span></div>
+        <div class="cmprow"><span class="cmpm">OPT-350M</span><span class="cmpb"><i style="width:32px;--c:var(--c-kl)"></i><em>2.9&times;</em></span><span class="cmpb"><i style="width:43px;--c:var(--c-kl)"></i><em>3.9&times;</em></span></div>
+        <div class="cmprow"><span class="cmpm">OPT-1.3B</span><span class="cmpb"><i style="width:41px;--c:var(--c-kl)"></i><em>3.8&times;</em></span><span class="cmpb"><i style="width:51px;--c:var(--c-kl)"></i><em>4.6&times;</em></span></div>
+        <div class="cmprow"><span class="cmpm">OPT-2.7B</span><span class="cmpb"><i style="width:51px;--c:var(--c-kl)"></i><em>4.6&times;</em></span><span class="cmpb"><i style="width:60px;--c:var(--c-kl)"></i><em>5.5&times;</em></span></div>
+      </div>
+
+      <div class="cmpgrp"><span class="cmpglab">fp16</span>
+        <div class="cmprow"><span class="cmpm">OPT-125M</span><span class="cmpb"><i style="width:8px;--c:var(--c-eager)"></i><em>0.67&times;</em></span><span class="cmpb"><i style="width:13px;--c:var(--c-kl)"></i><em>1.22&times;</em></span></div>
+        <div class="cmprow"><span class="cmpm">OPT-350M</span><span class="cmpb"><i style="width:8px;--c:var(--c-eager)"></i><em>0.70&times;</em></span><span class="cmpb"><i style="width:12px;--c:var(--c-kl)"></i><em>1.15&times;</em></span></div>
+        <div class="cmprow"><span class="cmpm">OPT-1.3B</span><span class="cmpb"><i style="width:8px;--c:var(--c-eager)"></i><em>0.69&times;</em></span><span class="cmpb"><i style="width:12px;--c:var(--c-kl)"></i><em>1.09&times;</em></span></div>
+        <div class="cmprow"><span class="cmpm">OPT-2.7B</span><span class="cmpb"><i style="width:9px;--c:var(--c-eager)"></i><em>0.78&times;</em></span><span class="cmpb"><i style="width:12px;--c:var(--c-kl)"></i><em>1.06&times;</em></span></div>
+        <div class="cmprow"><span class="cmpm">OPT-6.7B</span><span class="cmpb"><i style="width:9px;--c:var(--c-eager)"></i><em>0.84&times;</em></span><span class="cmpb"><i style="width:12px;--c:var(--c-kl)"></i><em>1.09&times;</em></span></div>
+      </div>
+
+      <div class="cmplegend"><span><i style="--c:var(--c-kl)"></i>faster than <code>torch.compile</code></span><span><i style="--c:var(--c-eager)"></i>slower</span><span class="muted">left&nbsp;=&nbsp;ORT &middot; right&nbsp;=&nbsp;TensorRT</span></div>
+    </div>
+
+    <p class="note"><b>The result splits by precision.</b> In <b>fp32</b>, <code>torch.compile</code> barely beats eager (1.02&ndash;1.12&times;) because it leaves the operators around the kernel unfused, while KernelLens fuses them: <b>3.2&ndash;5.5&times; faster</b>, growing with model size. In <b>fp16</b>, <code>torch.compile</code> optimises well and KernelLens only matches it &mdash; TensorRT edges it by 1.06&ndash;1.22&times;, and ONNX Runtime is <b>slower</b> (0.67&ndash;0.84&times;). Keeping kernels pays when the baseline leaves the graph unfused; when it already fuses, we break even. Accuracy tracks precision rather than speed: fp32 holds the same greedy token on &ge;98.8% of positions, fp16 under TensorRT on 93.4&ndash;97.9%, and OPT-350M in fp16 under ORT is bit-exact.</p>
   </section>
 
   <section id="why" style="--dot: var(--s6)">
