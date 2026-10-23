@@ -142,6 +142,22 @@ def main():
         results["eager_ms"] = bench(lambda: wrapped(ids), args.iters)
     print(f"eager          : {results['eager_ms']:.2f} ms")
 
+    # torch.compile is the strongest baseline here: it captures the same Triton
+    # kernels rather than reimplementing them, so the comparison is like for
+    # like. Same settings as the folding experiment.
+    try:
+        import torch._dynamo
+        torch._dynamo.reset()
+        cmodel = torch.compile(wrapped)
+        with torch.no_grad():
+            _ = cmodel(ids)                      # trigger compilation
+        with torch.no_grad():
+            results["torch_compile_ms"] = bench(lambda: cmodel(ids), args.iters)
+        print(f"torch.compile  : {results['torch_compile_ms']:.2f} ms")
+    except Exception as e:
+        results["torch_compile_error"] = f"{type(e).__name__}: {e}"
+        print(f"torch.compile  : FAILED {type(e).__name__}: {str(e)[:120]}")
+
     try:
         import kernel_lens as kl
         name = args.name or args.model.split("/")[-1].replace(".", "_")
