@@ -10,29 +10,48 @@ TensorRT 10.16.1.11.
 
 ## Prefill latency, S=512
 
-| Model | Triton modules | fp32 eager | fp32 ORT | fp32 TRT | fp16 eager | fp16 ORT | fp16 TRT |
-|---|---|---|---|---|---|---|---|
-| OPT-125M | 25 | 12.28 ms | 4.73 ms | **3.43 ms** | 5.75 ms | 3.61 ms | **1.99 ms** |
-| OPT-350M | 48 | 33.49 ms | 11.34 ms | **8.55 ms** | 10.32 ms | 7.34 ms | **4.62 ms** |
-| OPT-1.3B | 49 | 98.64 ms | 23.31 ms | **17.76 ms** | 15.49 ms | 14.20 ms | **9.11 ms** |
-| OPT-2.7B | 65 | 175.87 ms | 37.31 ms | **33.22 ms** | 20.81 ms | 22.47 ms | **15.41 ms** |
+`torch.compile` is the baseline that matters: it captures the same Triton
+kernels rather than reimplementing them, so the two differ only in how the
+surrounding operators are scheduled.
 
-Speedups over eager:
+| Model | dtype | Eager | `torch.compile` | ORT | TensorRT |
+|---|---|---|---|---|---|
+| OPT-125M | fp32 | 12.1 ms | 10.9 ms | 4.8 ms | **3.4 ms** |
+| OPT-125M | fp16 | 5.7 ms | 2.4 ms | 3.6 ms | **2.0 ms** |
+| OPT-350M | fp32 | 33.5 ms | - | 11.3 ms | **8.6 ms** |
+| OPT-350M | fp16 | 10.3 ms | - | 7.3 ms | **4.6 ms** |
+| OPT-1.3B | fp32 | 98.6 ms | 88.0 ms | 23.4 ms | **19.0 ms** |
+| OPT-1.3B | fp16 | 14.7 ms | 10.8 ms | 15.6 ms | **9.9 ms** |
+| OPT-2.7B | fp32 | 175.9 ms | 172.7 ms | 37.4 ms | **31.7 ms** |
+| OPT-2.7B | fp16 | 22.2 ms | 17.5 ms | 22.6 ms | **16.5 ms** |
+| OPT-6.7B | fp16 | 37.0 ms | 33.8 ms | 40.2 ms | **31.1 ms** |
 
-| Model | fp32 ORT | fp32 TRT | fp16 ORT | fp16 TRT |
-|---|---|---|---|---|
-| OPT-125M | 2.59x | 3.58x | 1.59x | 2.89x |
-| OPT-350M | 2.95x | 3.92x | 1.41x | 2.23x |
-| OPT-1.3B | 4.23x | 5.55x | 1.09x | 1.70x |
-| OPT-2.7B | 4.71x | 5.29x | 0.93x | 1.35x |
+Speedup over `torch.compile`:
 
-**TensorRT is fastest at every size and precision.** In fp32 the margin grows
-with the model (3.58x to 5.55x); the gain comes from the engine's graph
-optimisation around the plugin rather than from the normalisation kernel, so it
-is largest where the surrounding operators dominate. ONNX Runtime is
-competitive in fp32 but loses in fp16 — its compiled graph for OPT-125M carries
-1,583 nodes (76 `Cast`, 345 `Unsqueeze`, 549 `Constant`) against 25 custom
-operators, so per-node dispatch dominates at these shapes.
+| Model | dtype | ORT | TensorRT |
+|---|---|---|---|
+| OPT-125M | fp32 | 2.27x | **3.18x** |
+| OPT-1.3B | fp32 | 3.76x | **4.62x** |
+| OPT-2.7B | fp32 | 4.62x | **5.45x** |
+| OPT-125M | fp16 | 0.67x | **1.22x** |
+| OPT-1.3B | fp16 | 0.69x | **1.09x** |
+| OPT-2.7B | fp16 | 0.78x | **1.06x** |
+| OPT-6.7B | fp16 | 0.84x | **1.09x** |
+
+**The result splits by precision, and we do not claim a uniform speedup.**
+
+* **fp32** — `torch.compile` barely improves on eager (1.02-1.12x) because it
+  leaves the surrounding operators unfused. KernelLens fuses them, so TensorRT
+  is **3.2-5.5x faster**, and the margin grows with model size. This is
+  graph-level fusion at work, not the normalisation kernels.
+* **fp16** — `torch.compile` optimises well there (2.4x over eager at 125M),
+  and KernelLens only matches it: TensorRT edges it by **1.06-1.22x**, while
+  ONNX Runtime is consistently **slower (0.67-0.84x)**. The compiled fp16 graph
+  for OPT-125M carries 1,583 nodes (76 `Cast`, 345 `Unsqueeze`, 549
+  `Constant`) against 25 custom operators, so per-node dispatch dominates.
+
+Keeping kernels pays when the baseline leaves the graph unfused; when it
+already fuses, we break even.
 
 ## Numerical agreement
 

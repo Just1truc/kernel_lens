@@ -633,45 +633,55 @@ exporter rather than of the recovered contract, since plain
 \begin{table*}[t]
 \centering
 \footnotesize
-\begin{tabular}{lrrrrr}
+\begin{tabular}{llrrrr}
 \toprule
- & Triton & \multicolumn{2}{c}{fp32} & \multicolumn{2}{c}{fp16} \\
-\cmidrule(lr){3-4}\cmidrule(lr){5-6}
-Model & modules & Eager & ORT / TRT & Eager & ORT / TRT \\
+Model & dtype & Eager & \texttt{torch.compile} & ORT & TensorRT \\
 \midrule
-OPT-125M & 25 & 12.3\,ms & 4.7 / \textbf{3.4}\,ms & 5.8\,ms & 3.6 / \textbf{2.0}\,ms \\
-OPT-350M & 48 & 33.5\,ms & 11.3 / \textbf{8.6}\,ms & 10.3\,ms & 7.3 / \textbf{4.6}\,ms \\
-OPT-1.3B & 49 & 98.6\,ms & 23.3 / \textbf{17.8}\,ms & 15.5\,ms & 14.2 / \textbf{9.1}\,ms \\
-OPT-2.7B & 65 & 175.9\,ms & 37.3 / \textbf{33.2}\,ms & 20.8\,ms & 22.5 / \textbf{15.4}\,ms \\
+OPT-125M & fp32 & 12.1\,ms & 10.9\,ms & 4.8\,ms & \textbf{3.4}\,ms \\
+OPT-125M & fp16 & 5.7\,ms & 2.4\,ms & 3.6\,ms & \textbf{2.0}\,ms \\
+OPT-1.3B & fp32 & 98.6\,ms & 88.0\,ms & 23.4\,ms & \textbf{19.0}\,ms \\
+OPT-1.3B & fp16 & 14.7\,ms & 10.8\,ms & 15.6\,ms & \textbf{9.9}\,ms \\
+OPT-2.7B & fp32 & 175.9\,ms & 172.7\,ms & 37.4\,ms & \textbf{31.7}\,ms \\
+OPT-2.7B & fp16 & 22.2\,ms & 17.5\,ms & 22.6\,ms & \textbf{16.5}\,ms \\
+OPT-6.7B & fp16 & 37.0\,ms & 33.8\,ms & 40.2\,ms & \textbf{31.1}\,ms \\
 \bottomrule
 \end{tabular}
 \caption{Real pretrained OPT checkpoints with every decoder
 \texttt{LayerNorm} replaced by the Triton RMSNorm kernel. Prefill latency,
-$S{=}512$, on an A100-SXM4-80GB. Bold is TensorRT, the fastest lane at every
-size and precision.}
+$S{=}512$, on an A100-SXM4-80GB. \texttt{torch.compile} is the meaningful
+baseline: it captures the same kernels rather than reimplementing them. Bold
+marks the fastest configuration, which is TensorRT at every size and precision.}
 \label{tab:real}
 \end{table*}
 
-TensorRT is the fastest lane at every model size and in both precisions, and
-in fp32 the margin grows with the model: $3.58\times$, $3.92\times$,
-$5.55\times$ and $5.29\times$ over eager for 125M, 350M, 1.3B and 2.7B. The
-advantage comes from the engine's graph optimisation around the plugin rather
-than from the normalisation kernel itself, so it is largest where the
-surrounding operators dominate. ONNX Runtime is competitive in fp32
-($2.6$--$4.7\times$) but loses in fp16 ($0.93$--$1.59\times$): the compiled
-fp16 graph for OPT-125M carries $1{,}583$ nodes ($76$ \texttt{Cast}, $345$
-\texttt{Unsqueeze}, $549$ \texttt{Constant}) against only $25$ custom
-operators, so per-node dispatch overhead dominates at these shapes. Precision
-therefore matters more than engine choice for the runtime lane, and neither
-engine wins by a fixed factor --- the value of keeping kernels is workload- and
-precision-dependent, not size-dependent.
+TensorRT is the fastest configuration throughout, but the comparison that
+matters is against \texttt{torch.compile} rather than eager, since it captures
+the same Triton kernels and differs only in how the surrounding operators are
+scheduled. The picture splits by precision.
+
+In fp32 \texttt{torch.compile} barely improves on eager ($1.02$--$1.12\times$)
+because it does not fuse the operators around the kernel, whereas KernelLens
+does: TensorRT is $3.18\times$, $4.62\times$ and $5.45\times$ faster than
+\texttt{torch.compile} on 125M, 1.3B and 2.7B, and the margin grows with model
+size. That growth is the graph-level fusion at work, not the normalisation
+kernels.
+
+In fp16 the ordering reverses. \texttt{torch.compile} then optimises well
+($2.4\times$ over eager at 125M), and KernelLens only matches it: TensorRT
+edges \texttt{torch.compile} by $1.06$--$1.22\times$ across all four sizes,
+while ONNX Runtime is consistently \emph{slower} ($0.67$--$0.84\times$). The
+compiled fp16 graph for OPT-125M carries $1{,}583$ nodes ($76$ \texttt{Cast},
+$345$ \texttt{Unsqueeze}, $549$ \texttt{Constant}) against $25$ custom
+operators, so per-node dispatch overhead dominates at these shapes.
+
+Keeping kernels therefore pays only when the surrounding graph is left unfused.
+When the baseline already fuses, it breaks even, and we do not claim otherwise.
 
 Numerical agreement tracks precision rather than speed. In fp32 every model
 retains the same argmax on at least $98.8\%$ of positions and the mean absolute
-logit difference stays below $6.3\times10^{-3}$; OPT-350M in fp16 is bit-exact
-under ONNX Runtime. Under TensorRT in fp16, agreement falls to
-$93.6$--$97.9\%$ with a mean difference of up to $4.0\times10^{-2}$. Both
-precisions are reported rather than the more flattering one alone.
+logit difference stays below $6.3\times10^{-3}$; OPT-350M in fp16 under ONNX
+Runtime is bit-exact. Under TensorRT in fp16, agreement falls to
+$93.4$--$97.9\%$ with a mean difference of up to $5.3\times10^{-2}$.
 
 \section{Discussion}
 
