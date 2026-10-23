@@ -249,6 +249,21 @@ def build_trt_plugin(trt_plugins_dir: str, cache_dir: str):
             arch_flag = "-gencode=arch=compute_75,code=sm_75"
 
         trt_inc_dirs = []
+
+        # Headers matching the installed TensorRT, fetched and cached on first
+        # use when the bundled set is a different major version. See
+        # utils/trt_headers.py for why this is necessary: the pip TensorRT
+        # wheels ship no headers at all.
+        try:
+            from ..utils.trt_headers import resolve as _resolve_headers
+            _hdr_dir, _hdr_reason = _resolve_headers()
+            from ..config import debug_print as _dp
+            _dp(f"[KernelLens] TensorRT headers: {_hdr_dir or 'bundled'} ({_hdr_reason})")
+            if _hdr_dir:
+                trt_inc_dirs.append(_hdr_dir)
+        except Exception:
+            pass
+
         if os.environ.get("TENSORRT_INCLUDE_DIR"):
             trt_inc_dirs.append(os.environ["TENSORRT_INCLUDE_DIR"])
         user_trt_inc = os.path.expanduser("~/tensorrt_headers")

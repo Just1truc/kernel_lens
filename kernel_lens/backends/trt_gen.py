@@ -28,37 +28,31 @@ class TensorRTPluginGenerator:
         self.plugin_namespace = plugin_namespace
         self.plugin_version = plugin_version
         
-    def _generate_kernel_h(self, manifest: KernelManifest) -> str:
-        plugin_name = f"{manifest.kernel_name}Plugin"
-
-        constant_decls = []
-        for arg in manifest.arguments:
-            if arg.kind == 'scalar':
-                ctype = "float" if isinstance(arg.value, float) else "int"
-                constant_decls.append(f"{ctype} m_{arg.name};")
-        dynamic_members_cpp = "\n    ".join(constant_decls)
-
-        def get_trt_datatype(dtype_obj):
-            dtype_str = str(dtype_obj).lower()
-            if 'float8' in dtype_str or 'fp8' in dtype_str or 'e4m3' in dtype_str or 'e5m2' in dtype_str:
-                return "nvinfer1::DataType::kFP8"
-            elif 'bool' in dtype_str:
-                return "nvinfer1::DataType::kBOOL"
-            elif 'uint8' in dtype_str or 'int8' in dtype_str or 'int4' in dtype_str or 'uint4' in dtype_str:
-                return "nvinfer1::DataType::kINT8"
-            elif 'bfloat16' in dtype_str or 'bf16' in dtype_str:
-                return "nvinfer1::DataType::kBF16"
-            elif 'float16' in dtype_str or 'half' in dtype_str:
-                return "nvinfer1::DataType::kHALF"
-            elif 'float' in dtype_str:
-                return "nvinfer1::DataType::kFLOAT"
-            elif 'int64' in dtype_str or 'long' in dtype_str:
-                return "nvinfer1::DataType::kINT64"
-            elif 'int' in dtype_str:
-                return "nvinfer1::DataType::kINT32"
-            else:
-                return "nvinfer1::DataType::kFLOAT"
-
+    @staticmethod
+    def trt_datatype(dtype_obj: str) -> str:
+        """Map a torch dtype onto the TensorRT DataType."""
+        dtype_str = str(dtype_obj).lower()
+        if 'float8' in dtype_str or 'fp8' in dtype_str or 'e4m3' in dtype_str or 'e5m2' in dtype_str:
+            return "nvinfer1::DataType::kFP8"
+        elif 'bool' in dtype_str:
+            return "nvinfer1::DataType::kBOOL"
+        elif 'uint8' in dtype_str or 'int8' in dtype_str or 'int4' in dtype_str or 'uint4' in dtype_str:
+            return "nvinfer1::DataType::kINT8"
+        elif 'bfloat16' in dtype_str or 'bf16' in dtype_str:
+            return "nvinfer1::DataType::kBF16"
+        elif 'float16' in dtype_str or 'half' in dtype_str:
+            return "nvinfer1::DataType::kHALF"
+        elif 'float' in dtype_str:
+            return "nvinfer1::DataType::kFLOAT"
+        elif 'int64' in dtype_str or 'long' in dtype_str:
+            return "nvinfer1::DataType::kINT64"
+        elif 'int' in dtype_str:
+            return "nvinfer1::DataType::kINT32"
+        else:
+            return "nvinfer1::DataType::kFLOAT"
+    @staticmethod
+    def supports_format_body(manifest: KernelManifest, tensor_prefix: str = "") -> str:
+        """The supportsFormatCombination body, shared by both plugin emitters."""
         in_args = [a for a in manifest.arguments if a.kind in ('input', 'inplace')]
 
         # Enforce the dtype the kernel was compiled for, position by position.
@@ -67,7 +61,7 @@ class TensorRTPluginGenerator:
         _ordered_in = [a for a in manifest.arguments if a.kind in ('input', 'inplace')]
         _ordered_sc = [a for a in manifest.arguments if a.kind == 'scalar' and not getattr(a, 'is_constexpr', False)]
         _ordered_out = [a for a in manifest.arguments if a.kind in ('output', 'inplace')]
-        _pos_types = [get_trt_datatype(a.dtype) for a in (_ordered_in + _ordered_sc + _ordered_out)]
+        _pos_types = [TensorRTPluginGenerator.trt_datatype(a.dtype) for a in (_ordered_in + _ordered_sc + _ordered_out)]
         _pos_is_tensor = ([True] * len(_ordered_in) + [False] * len(_ordered_sc) + [True] * len(_ordered_out))
         _types_cpp = ", ".join(_pos_types) if _pos_types else "nvinfer1::DataType::kFLOAT"
         _is_tensor_cpp = ", ".join("true" if t else "false" for t in _pos_is_tensor) if _pos_is_tensor else "true"
@@ -96,7 +90,24 @@ class TensorRTPluginGenerator:
             )
         else:
             supports_format_cxx = type_guard_cxx + "return inOut[pos].format == nvinfer1::TensorFormat::kLINEAR;"
-        
+        # IPluginV3 hands supportsFormatCombination a DynamicPluginTensorDesc,
+        # whose fields live under .desc; V2 hands it a PluginTensorDesc directly.
+        if tensor_prefix:
+            supports_format_cxx = supports_format_cxx.replace("inOut[pos].", f"inOut[pos]{tensor_prefix}.")
+        return supports_format_cxx
+
+    def _generate_kernel_h(self, manifest: KernelManifest) -> str:
+        plugin_name = f"{manifest.kernel_name}Plugin"
+
+        constant_decls = []
+        for arg in manifest.arguments:
+            if arg.kind == 'scalar':
+                ctype = "float" if isinstance(arg.value, float) else "int"
+                constant_decls.append(f"{ctype} m_{arg.name};")
+        dynamic_members_cpp = "\n    ".join(constant_decls)
+
+        get_trt_datatype = TensorRTPluginGenerator.trt_datatype
+        supports_format_cxx = TensorRTPluginGenerator.supports_format_body(manifest)
         output_dim_cases = []
         out_args = [a for a in manifest.arguments if a.kind in ('output', 'inplace')]
         _dyn_axes = tuple(getattr(manifest, "dynamic_axes", ()) or ())
@@ -217,12 +228,15 @@ private:
 '''
         return textwrap.dedent(tpl).strip()
 
-    def _generate_kernel_cu(self, manifest: KernelManifest) -> str:
-        plugin_name = f"{manifest.kernel_name}Plugin"
-        ptx_str = manifest.ptx
-        ptx_encoded = json.dumps(ptx_str)
-        block_size = (manifest.num_warps if manifest.num_warps > 0 else 4) * 32
-        
+    @staticmethod
+    def build_shared_body(manifest: KernelManifest, block_size: int):
+        """Build the pieces the enqueue implementation needs.
+
+        Shared verbatim between the IPluginV2DynamicExt and the
+        IPluginV3 emitters: the PTX entry name, the kernelParams
+        assembly and the output-type dispatch are the same; only the
+        class hierarchy and the method signatures around them differ.
+        """
         scalars = [arg for arg in manifest.arguments if arg.kind == 'scalar']
         nb_outputs = sum(1 for arg in manifest.arguments if arg.kind == 'output')
         nb_outputs = max(1, nb_outputs)
@@ -388,10 +402,41 @@ private:
                 
             output_type_lines.append(f"if (index == {i}) return {trt_type};")
             
-        dynamic_output_types = "\n    ".join(output_type_lines)
+        return {
+            "ptx_entry_name": ptx_entry_name,
+            "dynamic_args_cpp": "\n    ".join(arg_setup_lines),
+            "dynamic_output_types": "\n    ".join(output_type_lines),
+            "grid_x_cxx": grid_x_cxx,
+            "grid_y_cxx": grid_y_cxx,
+            "grid_z_cxx": grid_z_cxx,
+            "num_ptx_slots": num_ptx_slots,
+            "init_str": init_str,
+            "size_additions": size_additions,
+            "deserialize_cpp": deserialize_cpp,
+            "serialize_cpp": serialize_cpp,
+            "clone_cpp": clone_cpp,
+        }
 
-        dynamic_args_cpp = "\n    ".join(arg_setup_lines)
+    def _generate_kernel_cu(self, manifest: KernelManifest) -> str:
+        plugin_name = f"{manifest.kernel_name}Plugin"
+        ptx_str = manifest.ptx
+        ptx_encoded = json.dumps(ptx_str)
+        block_size = (manifest.num_warps if manifest.num_warps > 0 else 4) * 32
         
+        shared = TensorRTPluginGenerator.build_shared_body(manifest, block_size)
+        ptx_entry_name = shared["ptx_entry_name"]
+        dynamic_args_cpp = shared["dynamic_args_cpp"]
+        dynamic_output_types = shared["dynamic_output_types"]
+        grid_x_cxx = shared["grid_x_cxx"]
+        grid_y_cxx = shared["grid_y_cxx"]
+        grid_z_cxx = shared["grid_z_cxx"]
+        num_ptx_slots = shared["num_ptx_slots"]
+        init_str = shared["init_str"]
+        size_additions = shared["size_additions"]
+        deserialize_cpp = shared["deserialize_cpp"]
+        serialize_cpp = shared["serialize_cpp"]
+        clone_cpp = shared["clone_cpp"]
+
         tpl = f'''
 #include "{manifest.kernel_name}Plugin.h"
 #include <cuda.h>

@@ -3,6 +3,62 @@
 Notable changes to `kernel-lens`. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.0] — 2026-10-24
+
+TensorRT 8.6 through 11, chosen automatically.
+
+### Added
+
+- **`IPluginV3` emitter** (`backends/trt_v3_gen.py`). TensorRT 10 deprecated the
+  entire `IPluginV2*` hierarchy and TensorRT 11 removed it, so a plugin built
+  against the legacy interfaces cannot be loaded there at all. The new emitter
+  produces the same semantics against `IPluginV3` plus its three capability
+  interfaces, and serialises through `PluginFieldCollection` instead of a
+  hand-written byte buffer — `getFieldsToSerialize()` writes the scalars and the
+  namespace, `createPlugin()` reconstructs from them on engine load.
+
+- **Automatic interface selection.** `plugin_api` defaults to `"auto"` and picks
+  from the environment:
+
+  | TensorRT | `IPluginV2*` | `IPluginV3` | emitted |
+  |---|---|---|---|
+  | < 10 (8.6, 9.x) | present | absent | `v2` |
+  | 10.x | deprecated | present | `v3` |
+  | 11+ | **removed** | present | `v3` |
+
+  An explicit `plugin_api="v2"` / `"v3"`, or `KERNEL_LENS_PLUGIN_API`, overrides
+  it; an impossible request fails with the reason.
+
+- **Header provisioning** (`utils/trt_headers.py`). The pip TensorRT wheels ship
+  no headers — verified: the package contains only `__init__.py` and `plugin/`.
+  The set matching the installed runtime is now fetched from the TensorRT OSS
+  repository (`release/<major>.<minor>`) and cached under
+  `~/.kernel_lens_headers/`, atomically and validated. `TENSORRT_INCLUDE_DIR`
+  overrides; `KERNEL_LENS_FETCH_HEADERS=0` disables. This is what makes future
+  TensorRT releases work without a package update.
+
+### Fixed
+
+- **The V3 plugin's `initialize()` was incomplete.** It loaded the PTX with a
+  bare `cuModuleLoadData` and nothing else, so every kernel failed with
+  `CUDA_ERROR_UNSUPPORTED_PTX_VERSION` (222) and the engine silently produced
+  uninitialised output. It now retains the primary CUDA context, retries with a
+  clamped `.version 9.0` and then an older `.target`, and sets
+  `CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES` — all of which the
+  `IPluginV2DynamicExt` path already did.
+- **Header/runtime major mismatch is now reported, not crashed.** A plugin built
+  against 10.x headers and loaded into an 11.x runtime segfaulted inside
+  TensorRT with no diagnostic. It now raises with the mismatch, the paths
+  involved, and the two ways out.
+
+### Verified
+
+TensorRT 10.16.1.11 with bundled headers, TensorRT 11.3.0.99 with fetched
+headers, and `plugin_api="v2"` forced: **16/16 conformance on each**, plus every
+parity suite (`0.00e+00` on the research kernels, in-place, quantized GEMMs and
+edge cases; `9.536743e-07` residual+RMSNorm; `4.768372e-07` Mamba) with values
+identical across the two emitters.
+
 ## [1.3.0] — 2026-10-23
 
 Shape-generic engines. `kl.compile(..., dynamic_shapes=True)` produces a single

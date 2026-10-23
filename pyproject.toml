@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kernel-lens"
-version = "1.3.0"
+version = "2.0.0"
 description = "Compile PyTorch models with custom @triton.jit kernels into ONNX Runtime and TensorRT C++ plugins"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -45,10 +45,17 @@ dependencies = [
 ]
 
 # Optional bracket dependencies for the inference engines
+#
+# TensorRT majors are handled at compile time. The pip TensorRT wheels ship no
+# headers, so KernelLens fetches the set matching the installed runtime from the
+# TensorRT OSS repository (cached under ~/.kernel_lens_headers) and falls back to
+# the bundled headers when they already match. Verified against 10.16 and 11.3.
+#
+# tensorrt-cu12-libs tracks CUDA 12; on a CUDA 13 host use tensorrt-cu13-libs.
 [project.optional-dependencies]
 ort = ["onnxruntime-gpu>=1.17.0"]
-trt = ["tensorrt>=8.6.0,<11.0.0", "tensorrt-cu12-libs<11.0.0"]
-all = ["onnxruntime-gpu>=1.17.0", "tensorrt>=8.6.0,<11.0.0", "tensorrt-cu12-libs<11.0.0"]
+trt = ["tensorrt>=8.6.0,<12.0.0", "tensorrt-cu12-libs"]
+all = ["onnxruntime-gpu>=1.17.0", "tensorrt>=8.6.0,<12.0.0", "tensorrt-cu12-libs"]
 # Needed only by tests/benchmark_real_model.py, which serves real checkpoints.
 bench = ["transformers>=4.40.0"]
 

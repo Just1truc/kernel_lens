@@ -15,6 +15,7 @@ from .onnx_exporter import TritonGlobalONNXExporter
 # Backend Generators
 from ..backends.ort_gen import generate_ort_bindings
 from ..backends.trt_gen import generate_trt_bindings
+from ..backends.trt_v3_gen import generate_trt_v3_bindings
 from ..utils.env_check import check_environment
 
 # Builders
@@ -130,7 +131,8 @@ def compile(
     interaction_handler: Optional[InteractionHandler] = None,
     verbose: bool = False,
     dynamic_shapes: bool = False,
-    dynamic_max: Optional[int] = None
+    dynamic_max: Optional[int] = None,
+    plugin_api: Optional[str] = None
 ) -> CompiledModel:
     """Compile a model to ONNX Runtime / TensorRT plugins.
 
@@ -144,12 +146,25 @@ def compile(
             traced batch. TensorRT builds kernels spanning ``1 .. dynamic_max``,
             so a needlessly wide range costs build time and can cost per-shape
             performance.
+        plugin_api: ``"v2"`` (default) or ``"v3"``. TensorRT 10 deprecated the
+            whole ``IPluginV2*`` hierarchy and TensorRT 11 removed it, so ``"v3"``
+            emits the plugin against ``IPluginV3`` instead. This selects the
+            emitted plugin library; the ONNX graph and the engine build are
+            unchanged. Overridable with ``KERNEL_LENS_PLUGIN_API``.
     """
     if verbose:
         from ..config import set_verbose
         set_verbose(True)
         
-    check_environment(backends)
+    # Resolve which plugin interface to emit. "auto" (the default) picks V3 where
+    # the runtime supports it and V2 otherwise, so one package spans TensorRT
+    # 8.6 through 11+. See utils/env_check.resolve_plugin_api.
+    from ..utils.env_check import resolve_plugin_api
+    plugin_api, plugin_api_reason = resolve_plugin_api(plugin_api)
+    from ..config import debug_print
+    debug_print(f"[KernelLens] plugin API: {plugin_api} ({plugin_api_reason})")
+
+    check_environment(backends, plugin_api=plugin_api)
     
     cache_dir = _get_cache_dir(name, inputs)
     
@@ -208,7 +223,10 @@ def compile(
     # 3. Compile TensorRT Plugins
     if "tensorrt" in backends:
         trt_plugins_dir = os.path.join(cache_dir, "trt_plugins")
-        generate_trt_bindings(manifests, trt_plugins_dir)
+        if plugin_api == "v3":
+            generate_trt_v3_bindings(manifests, trt_plugins_dir)
+        else:
+            generate_trt_bindings(manifests, trt_plugins_dir)
         build_trt_plugin(trt_plugins_dir, cache_dir)
         engine_file = os.path.join(cache_dir, f"{name}.engine")
         if os.path.exists(engine_file):

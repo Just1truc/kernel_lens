@@ -451,9 +451,13 @@ class CompiledModel:
                 trt.init_libnvinfer_plugins(TRT_LOGGER, "")
 
             dll = ctypes.CDLL(so_path, mode=ctypes.RTLD_GLOBAL)
-            if hasattr(dll, "register_triton_plugins_explicit"):
-                dll.register_triton_plugins_explicit.restype = ctypes.c_bool
-                dll.register_triton_plugins_explicit()
+            # V2 and V3 plugins export different registration entry points.
+            for _sym in ("register_triton_plugins_explicit", "register_triton_v3_plugins_explicit"):
+                if hasattr(dll, _sym):
+                    _fn = getattr(dll, _sym)
+                    _fn.restype = ctypes.c_bool
+                    _fn()
+                    break
             
             # --- CONSTRUCTION DU MOTEUR (S'il n'existe pas) ---
             if not os.path.exists(engine_path):

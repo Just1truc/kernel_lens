@@ -50,6 +50,12 @@ compiled_model.run(inputs, backend="onnx"|"tensorrt")
 - **Dynamic grids in C++** — launch-grid expressions are transpiled to C++
   integer math over runtime shapes, so one plugin serves dynamic batch and
   sequence lengths.
+- **One package, several TensorRT versions** — the plugin interface is chosen
+  from the environment. TensorRT 10 deprecated the whole `IPluginV2*` hierarchy
+  and TensorRT 11 removed it, so `plugin_api="auto"` (the default) emits
+  `IPluginV3` plugins where the runtime supports them and `IPluginV2DynamicExt`
+  plugins otherwise. This spans TensorRT 8.6 through 10.x today; TensorRT 11+
+  works when you point `TENSORRT_INCLUDE_DIR` at matching headers.
 - **Shape-generic engines** — `kl.compile(..., dynamic_shapes=True)` exports the
   leading dimension as a symbolic axis, so a single engine serves any size in a
   declared range via a TensorRT optimization profile. Verified on Blackwell
@@ -93,11 +99,34 @@ pip install kernel-lens[all]     # both
 Triton ≥ 2.1, and `nvcc` + `g++` on `PATH`. TensorRT must be `< 11` (the
 generator emits `IPluginV2DynamicExt`).
 
+**TensorRT versions.** Handled automatically. The pip TensorRT wheels ship **no
+headers**, so KernelLens fetches the set matching the installed runtime from the
+TensorRT OSS repository and caches it under `~/.kernel_lens_headers/<major>.<minor>`;
+when the headers it already has match the runtime major, nothing is fetched. If
+the download is unavailable the fallback is the bundled set, and a
+header/runtime major mismatch is then reported instead of crashing inside
+TensorRT. `plugin_api="auto"` picks the interface from the runtime:
+
+| TensorRT | `IPluginV2*` | `IPluginV3` | emitted |
+| :--- | :--- | :--- | :--- |
+| < 10 (8.6, 9.x) | present | absent | `v2` |
+| 10.x | deprecated | present | `v3` |
+| 11+ | **removed** | present | `v3` |
+
+Verified on TensorRT 10.16 and 11.3, both 16/16 on the conformance suite. Force
+a choice with `plugin_api="v2"` / `"v3"`, or the `KERNEL_LENS_PLUGIN_API`
+environment variable. To supply headers yourself — offline installs, or a TensorRT
+build the OSS repository does not track — set `TENSORRT_INCLUDE_DIR`, or
+`KERNEL_LENS_FETCH_HEADERS=0` to disable fetching entirely.
+
 **Environment:** `KERNEL_LENS_CACHE_DIR` (put it on a persistent volume so the
 `.so` / `.engine` artifacts survive `kl.load`), `KERNEL_LENS_CCBIN` (host
 compiler for `nvcc` — CUDA toolkits before 12.9 reject GCC 13's exception
 specifiers, so set it to `g++-12` there), `KERNEL_LENS_DEBUG` (or `KL_VERBOSE`),
-`TENSORRT_INCLUDE_DIR`, and `KERNEL_LENS_STREAM_READER=1` to deserialize engines
+`TENSORRT_INCLUDE_DIR` (override the TensorRT headers),
+`KERNEL_LENS_HEADER_CACHE` (where fetched TensorRT headers are kept),
+`KERNEL_LENS_FETCH_HEADERS=0` (disable fetching),
+`KERNEL_LENS_PLUGIN_API` (`auto`, `v2` or `v3`), and `KERNEL_LENS_STREAM_READER=1` to deserialize engines
 above 2 GB from disk rather than from a memory buffer (opt-in; see the
 [changelog](CHANGELOG.md)).
 
