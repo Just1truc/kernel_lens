@@ -22,7 +22,8 @@
 
 **KernelLens** compiles a PyTorch model that contains custom `@triton.jit` kernels
 into native C++ artifacts for **ONNX Runtime** (`OrtCustomOp`) and **NVIDIA
-TensorRT 10.x** (`nvinfer1::IPluginV2DynamicExt`). You write Triton in Python; it
+TensorRT 8.6 to 11** (`nvinfer1::IPluginV2DynamicExt`, and `nvinfer1::IPluginV3`
+on TensorRT 10 and later). You write Triton in Python; it
 emits the C++ plugin, builds the `.so`, and runs it with **zero-copy VRAM
 binding** — no manual C++ and no Python in the serving path.
 
@@ -81,9 +82,12 @@ compiled_model.run(inputs, backend="onnx"|"tensorrt")
 > conformance patterns and the quantized GEMMs, on both backends; two
 > multi-operator fusions land just above zero and are reported as such. Keeping
 > the kernel pays when the baseline leaves the graph unfused and breaks even when
-> it already fuses. The TensorRT-LLM backend is design-only (see
-> [`docs/assets/data/a100/trtllm_backend_design.md`](docs/assets/data/a100/trtllm_backend_design.md)),
-> and the quantized GEMMs are validated on ONNX Runtime only. Full methodology
+> it already fuses. A TensorRT-LLM backend is out of scope; the
+> [design note](docs/assets/data/a100/trtllm_backend_design.md) records what
+> integrating one would take. The kernels themselves are usable there — they are
+> ordinary `@triton.jit` functions, and an A100 measurement confirmed a KernelLens
+> RMSNorm is bit-identical to the flashinfer kernel TensorRT-LLM already uses
+> (`0.00e+00`). The quantized GEMMs are validated on ONNX Runtime only. Full methodology
 > and every raw JSON are under [`docs/assets/data/`](docs/assets/data/).
 
 ## Installation

@@ -1,6 +1,12 @@
+import ast
+import inspect
 import re
+import sys
+import textwrap
+from typing import Any, Dict, List, Optional, Set
+
 import torch
-from typing import List, Optional, Dict, Any
+
 from ..config import debug_print
 
 # REMOVED the circular import: from .manifest import KernelManifest
@@ -73,92 +79,207 @@ def translate_symint_to_cxx(sym_int: Any, sym_map: Dict[str, str]) -> str:
     expr_str = expr_str.replace("//", "/")
     return expr_str
 
+# ---------------------------------------------------------------------------
+# Argument taxonomy
+# ---------------------------------------------------------------------------
+
+def warn(msg: str) -> None:
+    """Taxonomy diagnostics go to stderr so stdout stays parseable."""
+    sys.stderr.write(f"[kernel_lens] {msg}\n")
+
+
+def _source_ast(fn_obj: Any) -> Optional[ast.FunctionDef]:
+    """The FunctionDef behind a kernel or helper, or None if it is unavailable."""
+    actual = getattr(fn_obj, "fn", fn_obj)
+    if not callable(actual):
+        return None
+    try:
+        source = inspect.getsource(actual)
+    except Exception:
+        return None
+    # A nested function's source comes back indented; ast.parse needs it flush.
+    for candidate in (source, textwrap.dedent(source)):
+        try:
+            tree = ast.parse(candidate)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                return node
+    return None
+
+
+def _definitions(fn_node: ast.FunctionDef) -> Dict[str, List[Any]]:
+    """Local name -> the expressions assigned to it.
+
+    ``p += off`` is treated as ``p = p + off`` (self-referential; the resolver's
+    ``seen`` set terminates it), and a ``for`` target takes its iterable.
+    """
+    defs: Dict[str, List[Any]] = {}
+    for node in ast.walk(fn_node):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            defs.setdefault(node.targets[0].id, []).append(node.value)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            defs.setdefault(node.target.id, []).append(node.value)
+        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            defs.setdefault(node.target.id, []).append(
+                ast.BinOp(left=node.target, op=node.op, right=node.value))
+        elif isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+            defs.setdefault(node.target.id, []).append(node.iter)
+    return defs
+
+
+class TargetResolver:
+    """Resolves load/store targets back to the arguments they derive from.
+
+    This replaces a string test -- "does this argument's name occur in the
+    unparsed target?" -- which misses every pointer renamed through an
+    intermediate (``q_ptrs = Q_ptr + offs`` names neither ``Q`` nor ``Q_ptr``)
+    and over-matches short names (``o`` is a substring of both ``row_x`` and
+    ``row_out``, which turns a plain output into an in-place argument).
+    """
+
+    _MAX_DEPTH = 12
+
+    def __init__(self, fn_node, env, globals_map, visited):
+        self.fn = fn_node
+        self.env = env                 # this scope's parameter -> kernel arguments
+        self.globals = globals_map
+        self.visited = visited         # (qualname, bound env) recursion guard
+        self.defs = _definitions(fn_node)
+        self.loads: Set[str] = set()
+        self.stores: Set[str] = set()
+
+    def resolve(self, node, seen=frozenset(), depth: int = 0) -> Set[str]:
+        """Kernel arguments reachable by walking ``node`` back through assignments."""
+        out: Set[str] = set()
+        if depth > self._MAX_DEPTH:
+            return out
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
+                if child.id in self.env:
+                    out |= self.env[child.id]
+                elif child.id in self.defs and child.id not in seen:
+                    for rhs in self.defs[child.id]:
+                        out |= self.resolve(rhs, seen | {child.id}, depth + 1)
+        return out
+
+    def scan(self):
+        for node in ast.walk(self.fn):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+            if callee in ("load", "store") and node.args:
+                reached = self.resolve(node.args[0])
+                (self.loads if callee == "load" else self.stores).update(reached)
+            elif callee:
+                self._descend(callee, node)
+        return self.loads, self.stores
+
+    def _descend(self, callee_name: str, call_node: ast.Call) -> None:
+        """Follow a call into a helper, binding its parameters to the call site.
+
+        The binding is what makes nested helpers work. Attributing the helper's
+        own parameter names, as a bare recursion does, only lines up with the
+        kernel's arguments when the two happen to share a name.
+        """
+        target = self.globals.get(callee_name)
+        if target is None or not callable(target):
+            return
+        helper = _source_ast(target)
+        if helper is None:
+            return
+        actual = getattr(target, "fn", target)
+        try:
+            bound = inspect.signature(actual).bind_partial(
+                *call_node.args,
+                **{kw.arg: kw.value for kw in call_node.keywords if kw.arg})
+        except Exception:
+            warn(f"could not bind the arguments of '{callee_name}'; "
+                 "its loads and stores are not attributed")
+            return
+        env = {}
+        for pname, pval in bound.arguments.items():
+            env[pname] = self.resolve(pval) if isinstance(pval, ast.AST) else set()
+        key = (getattr(actual, "__qualname__", callee_name),
+               frozenset((k, frozenset(v)) for k, v in env.items()))
+        if key in self.visited:
+            return
+        self.visited.add(key)
+        sub = TargetResolver(helper, env, getattr(actual, "__globals__", self.globals), self.visited)
+        loads, stores = sub.scan()
+        self.loads |= loads
+        self.stores |= stores
+
+
+# A tensor argument the resolver could not reach is guessed from its name.
+# These hints only ever decide arguments the resolution left undetermined.
+_OUTPUT_HINTS = ['out', 'dst', 'res', 'output', 'result', 'y']
+
+
 def analyze_grid_asts(
-    manifests: List[Any], 
+    manifests: List[Any],
     handler: Optional[Any] = None
 ) -> List[Any]:
-    """
-    Analyzes symbolic ASTs and classifies tensor arguments deterministically via tl.store inspection,
-    recursively traversing called helper functions if necessary.
-    """
-    import inspect, ast
+    """Classify each tensor argument as input, output or in-place.
 
+    Every ``tl.load`` / ``tl.store`` target is resolved backwards through the
+    function's own assignments to the arguments it derives from. Only arguments
+    that resolution does not reach are guessed, and each guess is reported on
+    stderr so a silent misclassification cannot pass unnoticed.
+    """
     for manifest in manifests:
         debug_print(f"\n{'='*50}\nConfiguring I/O for: {manifest.kernel_name}\n{'='*50}")
-        
-        output_arg_names = set()
-        input_arg_names = set()
-        
+
+        load_reached: Set[str] = set()
+        store_reached: Set[str] = set()
+
         if hasattr(manifest, 'fn') and manifest.fn is not None:
-            try:
-                visited_fns = set()
-                
-                def inspect_fn_ast(fn_obj):
-                    if fn_obj in visited_fns:
-                        return
-                    visited_fns.add(fn_obj)
-                    
-                    actual_fn = fn_obj.fn if hasattr(fn_obj, 'fn') else fn_obj
-                    if not callable(actual_fn):
-                        return
-                        
-                    try:
-                        source = inspect.getsource(actual_fn)
-                        tree = ast.parse(source)
-                    except Exception:
-                        return
+            fn_node = _source_ast(manifest.fn)
+            if fn_node is not None:
+                actual = getattr(manifest.fn, "fn", manifest.fn)
+                params = [a.arg for a in fn_node.args.args] + [a.arg for a in fn_node.args.kwonlyargs]
+                resolver = TargetResolver(
+                    fn_node,
+                    {p: {p} for p in params},
+                    getattr(actual, "__globals__", {}),
+                    set(),
+                )
+                load_reached, store_reached = resolver.scan()
+            else:
+                warn(f"source unavailable for '{manifest.kernel_name}'; "
+                     "argument roles fall back to name heuristics")
 
-                    for node in ast.walk(tree):
-                        if isinstance(node, ast.Call):
-                            func_name = ""
-                            if isinstance(node.func, ast.Attribute): 
-                                func_name = node.func.attr
-                            elif isinstance(node.func, ast.Name): 
-                                func_name = node.func.id
-
-                            if func_name == 'store' and node.args:
-                                target_str = ast.unparse(node.args[0])
-                                for arg in manifest.arguments:
-                                    if arg.shape and (arg.name in target_str or target_str.startswith(arg.name) or re.search(rf'\b{arg.name}\b', target_str)):
-                                        output_arg_names.add(arg.name)
-                            elif func_name == 'load' and node.args:
-                                target_str = ast.unparse(node.args[0])
-                                for arg in manifest.arguments:
-                                    if arg.shape and (arg.name in target_str or target_str.startswith(arg.name) or re.search(rf'\b{arg.name}\b', target_str)):
-                                        input_arg_names.add(arg.name)
-                            else:
-                                # Check if calling another triton jit or helper function
-                                try:
-                                    glob = getattr(actual_fn, '__globals__', {})
-                                    if func_name in glob and callable(glob[func_name]):
-                                        inspect_fn_ast(glob[func_name])
-                                except Exception:
-                                    pass
-
-                fn_obj = manifest.fn
-                inspect_fn_ast(fn_obj)
-            except Exception as e:
-                debug_print(f"Warning during AST analysis: {e}")
-
-        # Heuristic fallback if output_arg_names is empty but tensor args exist
         tensor_args = [a for a in manifest.arguments if a.shape]
-        if not output_arg_names and tensor_args:
-            for arg in tensor_args:
-                lname = arg.name.lower()
-                if any(kw in lname for kw in ['out', 'dst', 'res', 'output', 'result', 'y']) and not lname.startswith('in'):
-                    output_arg_names.add(arg.name)
+        tensor_names = {a.name for a in tensor_args}
+        input_arg_names = load_reached & tensor_names
+        output_arg_names = store_reached & tensor_names
+
+        undetermined = tensor_names - input_arg_names - output_arg_names
+        if undetermined and tensor_args:
+            warn(f"'{manifest.kernel_name}': no load/store target resolved to "
+                 f"{sorted(undetermined)}; guessing from names")
+            for name in sorted(undetermined):
+                lname = name.lower()
+                if any(kw in lname for kw in _OUTPUT_HINTS) and not lname.startswith('in'):
+                    output_arg_names.add(name)
             if not output_arg_names and len(tensor_args) > 1:
-                # Default the last tensor argument as output if no output detected
-                output_arg_names.add(tensor_args[-1].name)
+                last = tensor_args[-1].name
+                output_arg_names.add(last)
+                warn(f"'{manifest.kernel_name}': defaulting the last tensor "
+                     f"argument '{last}' to output")
 
         for arg in manifest.arguments:
             if arg.shape:
                 if arg.name in output_arg_names and arg.name in input_arg_names:
                     arg.kind = 'inplace'
-                    debug_print(f"[AST-Analysis] '{arg.name}' statically resolved to INPLACE via tl.load and tl.store analysis.")
+                    debug_print(f"[AST-Analysis] '{arg.name}' resolved to INPLACE (loaded and stored).")
                 elif arg.name in output_arg_names:
                     arg.kind = 'output'
-                    debug_print(f"[AST-Analysis] '{arg.name}' statically resolved to OUTPUT via tl.store analysis.")
+                    debug_print(f"[AST-Analysis] '{arg.name}' resolved to OUTPUT.")
+                elif arg.name in input_arg_names:
+                    arg.kind = 'input'
+                    debug_print(f"[AST-Analysis] '{arg.name}' resolved to INPUT.")
                 elif handler is not None:
                     arg.kind = handler.ask_tensor_kind(manifest.kernel_name, arg.name, arg.shape)
                 else:

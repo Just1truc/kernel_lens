@@ -3,6 +3,47 @@
 Notable changes to `kernel-lens`. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.1] — 2026-10-26
+
+Fixes an argument-taxonomy bug that could misclassify a kernel argument as an
+input when it was in fact the output buffer.
+
+### Fixed
+
+- **Argument roles are now resolved, not name-matched.** `compiler/ast_analyzer.py`
+  classified each `tl.load` / `tl.store` target by asking whether an argument's
+  name appeared in the unparsed target expression. That test failed in both
+  directions:
+
+  - **It was blind to a renamed pointer.** For `q_ptrs = Q_ptr + offs` — the idiom
+    every flash-attention-style kernel uses — the target string names neither `Q`
+    nor `Q_ptr`, so the access was attributed to nothing. Six of the 46 kernels in
+    this repository that store anywhere had an output side invisible to it,
+    `rmsnorm_kernel` among them. A buffer the kernel wrote to was classified as an
+    input, so the graph never saw the mutation and an optimiser was free to reorder
+    around it; the mirror error classified a read-only tensor as the output.
+  - **It was a substring test.** A one-character argument matched unrelated
+    temporaries: `o` occurs inside both `row_x` and `row_out`, which placed it in
+    the load *and* the store set and turned a plain output into an in-place
+    argument.
+
+  Each load/store target is now resolved backwards through the function's own
+  assignments (`ast.Assign`, `ast.AnnAssign`, `ast.AugAssign`, `for` targets) to
+  the arguments it derives from, and a call into a helper binds that helper's
+  parameters to the call-site argument expressions before recursing. Arguments the
+  resolution does not reach are still guessed from their names, but every such
+  guess is now reported on stderr rather than applied silently.
+
+  Attribution improves on 21 of the 47 kernels in this repository, with no losses,
+  and no kernel in the test suites falls back to a name heuristic at all. The
+  `SymInt` translation path (`raw_sym_expr`, `_cxx_pow`, `translate_symint_to_cxx`)
+  is byte-identical to 2.0.0.
+
+  Verified on an RTX 5060 Ti: 16/16 conformance cases bit-exact on both ONNX
+  Runtime and TensorRT, every research kernel at `0.000000e+00` against native
+  Triton, and the in-place, edge-case, fused-residual, Mamba and INT4 suites
+  reproduce their pre-change numbers exactly.
+
 ## [2.0.0] — 2026-10-24
 
 TensorRT 8.6 through 11, chosen automatically.
