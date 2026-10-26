@@ -6,7 +6,7 @@
   # Compiling PyTorch Triton Kernels into C++ Inference Plugins
 
   [![PyPI Version](https://img.shields.io/pypi/v/kernel-lens.svg?color=blue)](https://pypi.org/project/kernel-lens/)
-  [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23194523.svg)](https://doi.org/10.5281/zenodo.23194523)
+  [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23654641.svg)](https://doi.org/10.5281/zenodo.23654641)
   [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
   [![CUDA 12.0+](https://img.shields.io/badge/CUDA-12.0+-76B900.svg?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
@@ -296,8 +296,8 @@ named preprint**).
   institution = {Galiad Research},
   year        = {2026},
   version     = {1.2.1},
-  doi         = {10.5281/zenodo.23194523},
-  url         = {https://doi.org/10.5281/zenodo.23194523}
+  doi         = {10.5281/zenodo.23654641},
+  url         = {https://doi.org/10.5281/zenodo.23654641}
 }
 ```
 

@@ -65,7 +65,7 @@ Documentation = "https://just1truc.github.io/kernel_lens/"
 Changelog = "https://github.com/Just1truc/kernel_lens/blob/main/CHANGELOG.md"
 "Source Code" = "https://github.com/Just1truc/kernel_lens"
 "Bug Tracker" = "https://github.com/Just1truc/kernel_lens/issues"
-Paper = "https://doi.org/10.5281/zenodo.23194523"
+Paper = "https://doi.org/10.5281/zenodo.23654641"
 
 [tool.setuptools.packages.find]
 include = ["kernel_lens*"]

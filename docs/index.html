@@ -516,7 +516,7 @@ pip install -e .[all]</code></pre>
       <li style="--dot: var(--s2)"><span class="d"></span><span>Folding + kernels benchmark</span><span class="s done">done</span></li>
       <li style="--dot: var(--s4)"><span class="d"></span><span>Second architecture (A100 / <code>sm_80</code>): 14/14 conformance, bit-exact</span><span class="s done">done</span></li>
       <li style="--dot: var(--s5)"><span class="d"></span><span>Real pretrained models: OPT-125M → 6.7B, both engines, both precisions</span><span class="s done">done</span></li>
-      <li style="--dot: var(--s3)"><span class="d"></span><span>TensorRT-LLM backend (non-attention kernels)</span><span class="s">next</span></li>
+      <li style="--dot: var(--s3)"><span class="d"></span><span>TensorRT-LLM backend</span><span class="s">out of scope</span></li>
       <li style="--dot: var(--s6)"><span class="d"></span><span>Auto-tune dispatch, CUDA Graphs, NCCL, Metal/WebGPU</span><span class="s">next</span></li>
     </ul>
   </section>
@@ -527,7 +527,8 @@ pip install -e .[all]</code></pre>
     <details><summary>Does KernelLens make my kernel faster than Triton?</summary><p>It runs the identical kernel behind a C++ operator boundary, so a single operator is within 6–13% of native Triton. The win is the combination: the engine folds the standard layers around your kernel, which the unfused path cannot, and the folded-only path cannot express the kernel at all. On a two-layer block that is 1.99× versus folded-only and 1.08× versus the unfused kernel path.</p></details>
     <details><summary>Then why use it?</summary><p>Because production serves C++ engines. KernelLens lets a custom Triton kernel live inside TensorRT or ONNX Runtime, where the standard layers are folded and tuned, and the memory planner covers everything — and it removes the hand-written plugin.</p></details>
     <details><summary>Is the parity exact?</summary><p>Against native Triton, <code>0.00e+00</code> — bit-identical — for the research kernels, the conformance patterns and the quantized GEMMs on both backends. Two workloads that fuse several operators (residual+RMSNorm, Mamba's scan) land at <code>≤9.5e-07</code> and <code>4.8e-07</code>, which we report rather than round to zero.</p></details>
-    <details><summary>Which TensorRT versions?</summary><p>8.6 through 11, automatically. TensorRT 10 deprecated the whole <code>IPluginV2*</code> plugin hierarchy and TensorRT 11 removed it, so <code>plugin_api="auto"</code> (the default) emits <code>IPluginV3</code> plugins where the runtime supports them and <code>IPluginV2DynamicExt</code> plugins below TensorRT 10. The pip TensorRT wheels ship no headers, so the set matching the installed runtime is fetched from the TensorRT OSS repository on first use and cached; a header/runtime major mismatch is reported rather than crashing inside TensorRT. Verified on TensorRT 10.16 and 11.3, 16/16 conformance on each.</p></details>
+    <details><summary>Which TensorRT versions?</summary><p>8.6 through 11, automatically. TensorRT 10 deprecated the whole <code>IPluginV2*</code> plugin hierarchy and TensorRT 11 removed it, so <code>plugin_api="auto"</code> (the default) emits <code>IPluginV3</code> plugins where the runtime supports them and <code>IPluginV2DynamicExt</code> plugins below TensorRT 10. The pip TensorRT wheels ship no headers, so the set matching the installed runtime is fetched from the TensorRT OSS repository on first use and cached; a header/runtime major mismatch is reported rather than crashing inside TensorRT. Verified at 16/16 conformance on TensorRT 10.16 and 11.3 on the RTX&nbsp;5060&nbsp;Ti,
+and on TensorRT 10.14.1.48 on the A100.</p></details>
     <details><summary>Which hardware?</summary><p>Two architectures: an RTX 5060&nbsp;Ti (<code>sm_120a</code>, Blackwell) for the folding, latency, end-to-end and quantized results, and an A100-SXM4-80GB (<code>sm_80</code>, Ampere) for the conformance, parity and real-model results. Results are reported per configuration and never blended. KernelLens targets CUDA C++ engines on NVIDIA hardware; other vendors and clusters are not extrapolated.</p></details>
   </section>
 
@@ -536,7 +537,6 @@ pip install -e .[all]</code></pre>
     <h2>Compiling PyTorch Triton Kernels into C++ Inference Plugins.</h2>
     <p>The technical report derives the parameter taxonomy, the manual pipeline, and the KernelLens compile and run pipelines, and reports the folding, parity, latency, end-to-end and quantized results. A TMLR-formatted variant is generated from the same source.</p>
     <p class="cta"><a class="btn solid" href="kernel_lens_paper.pdf">Read the paper (PDF)</a>
-       <a class="btn" href="kernel_lens_tmlr_paper.pdf">TMLR version</a>
        <a class="btn" href="https://github.com/Just1truc/kernel_lens">Source &amp; reproduction scripts</a></p>
     <pre><code class="language-bibtex">@article{duc2026kernellens,
   title       = {KernelLens: Compiling PyTorch Triton Kernels into C++ Inference Plugins},
@@ -544,7 +544,7 @@ pip install -e .[all]</code></pre>
   institution = {Galiad Research},
   year        = {2026},
   version     = {1.2.1},
-  doi         = {10.5281/zenodo.23194523}
+  doi         = {10.5281/zenodo.23654641}
 }</code></pre>
   </section>
 
@@ -554,7 +554,7 @@ pip install -e .[all]</code></pre>
       <a href="https://github.com/Just1truc/kernel_lens">repository</a> ·
       <a href="https://pypi.org/project/kernel-lens/">pypi</a> ·
       <a href="https://github.com/Just1truc/kernel_lens/issues">issues</a> ·
-      <a href="https://doi.org/10.5281/zenodo.23194523">doi</a>
+      <a href="https://doi.org/10.5281/zenodo.23654641">doi</a>
     </span>
   </footer>
 </div>
